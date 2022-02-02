@@ -37,9 +37,9 @@ def systemcall(command):
 	return p.stdout.read().decode('utf8').strip().split('\n')
 
 def average(iterable):
-	return round(sum(iterable) / len(iterable), 2)
+	return round(sum(iterable) / len(iterable), 4)
 
-def estimateFF(folder):
+def preprocess(folder):
 	'''
 	input: tsv of variants from trio family
 	output: variant inside VAFp and VAFm statements in tsv format
@@ -57,46 +57,51 @@ def estimateFF(folder):
 		datafs = datafs.loc[(datafs['REF'] == '.') | (datafs['ALT'] == '.') | (datafs['REF'].str.len() > 1) | (datafs['ALT'].str.len() > 1)]
 	##foetus heterozygote avec alternate allele provenant du père
 	filter_foetus = foetus.loc[(~foetus['POS'].isin(mother['POS'].to_list()))]
-	AF_list = {} 
-	VAFp_list = []
-	for j, var in filter_foetus.iterrows():
-		AF_list[var['POS']] = {}
-		for i, fields in enumerate(var['FORMAT'].split(':')):
-			AF_list[var['POS']][fields] = var['FCL2104751'].split(':')[i]
-
-	for var in AF_list.values():
-		if 'VAF' in var:
-			VAFp_list.append(float(var['VAF']))
-	VAFp = average(VAFp_list)
-	print("#[INFO] VAFp (alternate allele provide by father doesn't matter if he was hetero or homo): ", VAFp)
-
+	print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(filter_foetus))
+	
 	#foetus heterozygote avec alternate allele provenant de la mère sachant variant homozygote et père ayant donné un allèle de reference
 	homotmp = mother.loc[mother['ASG2104747'].str.partition(':')[0] == "1/1"]
 	homo = homotmp['POS'].to_list()
+	print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
 
-	filter_foetus2 = foetus.loc[(foetus['POS'].isin(homo)) & ((foetus['FCL2104751'].str.partition(':')[0] == "1/0") | (foetus['FCL2104751'].str.partition(':')[0] == "0/1"))]
-
-	print("#[INFO] Length homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
-	#print(homo[0:5])
-
-	AF_list2 = {} 
-	for j, var in filter_foetus2.iterrows():
-		AF_list2[var['POS']] = {}
-		for i, fields in enumerate(var['FORMAT'].split(':')):
-			#if var['FCL2104751'].split(':')[i]
-			AF_list2[var['POS']][fields] = var['FCL2104751'].split(':')[i]
+	filter_foetus_homo = foetus.loc[(foetus['POS'].isin(homo)) & ((foetus['FCL2104751'].str.partition(':')[0] == "1/0") | (foetus['FCL2104751'].str.partition(':')[0] == "0/1"))]
 	
-	VAFm_list = []
-	for var in AF_list2.values():
+	return filter_foetus, filter_foetus_homo
+	
+def estimateFF(filter, foetus):
+	AF_list = {} 
+	VAF_list = []
+	for j, var in filter.iterrows():
+		AF_list[var['POS']] = {}
+		for i, fields in enumerate(var['FORMAT'].split(':')):
+			AF_list[var['POS']][fields] = var[foetus].split(':')[i]
+		for  features in var['INFO'].split(';'):
+			if '=' in features:
+				keys = features.split('=')[0]
+				value = features.split('=')[1]
+				AF_list[var['POS']][keys] = value
+			else:
+				AF_list[var['POS']]['infos'] = features
+
+
+	for var in AF_list.values():
 		if 'VAF' in var:
-			VAFm_list.append(float(var['VAF']))
-	VAFm = average(VAFm_list)
-	print("#[INFO] VAFm : ", VAFm)
-	print("#[INFO] Estimation of Foetal fraction : ", VAFp + (1 - VAFm))
+			VAF_list.append(float(var.get('VAF')))
+		else:
+			VAF_list.append(float(var.get('AF')))
+			print(var.get('AF'))
+	VAF = average(VAF_list)
+
+	VAF_list = []
+	for var in AF_list.values():
+		if 'VAF' in var:
+			VAF_list.append(float(var['VAF']))
+	VAF = average(VAF_list)
+	print("#[INFO] VAF average: ", VAF)
+	return VAF
 
 @lru_cache
 def vcfTodataframe(file, rheader=False):
-
 
 	'''
 	Take in input vcf file, or tsv and return a dataframe
@@ -142,6 +147,13 @@ def main():
 			print("#[INFO] VCF ", files)
 			if not os.path.exists(osj(folder, files.split('.')[0]+'.pickle')):
 				vcfTodataframe(files)
-	estimateFF(folder) 
+	
+	filter_father, filter_mother = preprocess(folder)
+	VAFp = estimateFF(filter_father, "FCL2104751")
+	VAFm = estimateFF(filter_mother, "FCL2104751")
+
+	FF = VAFp + (1 - VAFm)
+	print("#[INFO] Estimation of Foetal fraction : ", FF)
+
 if __name__ == "__main__":
 	main()
