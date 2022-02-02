@@ -11,11 +11,12 @@ FF = VAFpaverage+(1-VAFm average)
 
 
 from functools import lru_cache
+from os.path import join as osj
+import argparse
+import os
 import pandas as pd
 import re
-from os.path import join as osj
 import subprocess
-import os
 import sys
 
 def print_progress_bar(i, max):
@@ -39,19 +40,19 @@ def systemcall(command):
 def average(iterable):
 	return round(sum(iterable) / len(iterable), 4)
 
-def preprocess(folder):
+def preprocess(mum, dad, foetal):
 	'''
 	input: tsv of variants from trio family
 	output: variant inside VAFp and VAFm statements in tsv format
 	'''
-	try:
-		mother = pd.read_pickle(osj(folder, "ASG2104747.pickle"))
-		father = pd.read_pickle(osj(folder, "ASG2104746.pickle"))
-		foetus = pd.read_pickle(osj(folder, "FCL2104751.pickle"))
-	except FileNotFoundError:
-		print('File does not exist')
-		exit()
+	for j, values in locals().items():
+		filename = osj(os.path.dirname(values), os.path.basename(values).split('.')[0]+'.pickle')
+		if not os.path.exists(filename):
+			vcfTodataframe(filename)
 
+	mother = pd.read_pickle(osj(os.path.dirname(mum), os.path.basename(mum).split('.')[0]+'.pickle'))
+	father = pd.read_pickle(osj(os.path.dirname(dad), os.path.basename(dad).split('.')[0]+'.pickle'))
+	foetus = pd.read_pickle(osj(os.path.dirname(foetal), os.path.basename(foetal).split('.')[0]+'.pickle'))
 	dataframe = [ mother, father, foetus]
 	for datafs in dataframe:
 		datafs = datafs.loc[(datafs['REF'] == '.') | (datafs['ALT'] == '.') | (datafs['REF'].str.len() > 1) | (datafs['ALT'].str.len() > 1)]
@@ -89,7 +90,6 @@ def estimateFF(filter, foetus):
 			VAF_list.append(float(var.get('VAF')))
 		else:
 			VAF_list.append(float(var.get('AF')))
-			print(var.get('AF'))
 	VAF = average(VAF_list)
 
 	VAF_list = []
@@ -140,17 +140,20 @@ def vcfTodataframe(file, rheader=False):
 		dfVar.to_pickle(osj(os.path.dirname(file), name+'.pickle'))
 		return dfVar
 
+def parseargs():
+	parser = argparse.ArgumentParser(description="Filter tsv in DPNI and POOL context, basically tsv have to come from varank analysis ")
+	parser.add_argument("-d", "--dad", type=str, help="Absolute path of vcf variant from father")
+	parser.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)")
+	parser.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother")
+	args = parser.parse_args()
+	return args
+
 def main():
-	folder = "/home1/data/STARK/data/DPNI/trio/TWIST"
-	for files in os.listdir(folder):
-		if files.endswith('.vcf'):
-			print("#[INFO] VCF ", files)
-			if not os.path.exists(osj(folder, files.split('.')[0]+'.pickle')):
-				vcfTodataframe(files)
-	
-	filter_father, filter_mother = preprocess(folder)
-	VAFp = estimateFF(filter_father, "FCL2104751")
-	VAFm = estimateFF(filter_mother, "FCL2104751")
+	args = parseargs()
+	ffname = os.path.basename(args.foetus).split('.')[0]
+	filter_father, filter_mother = preprocess(args.mum, args.dad, args.foetus)
+	VAFp = estimateFF(filter_father, ffname)
+	VAFm = estimateFF(filter_mother, ffname)
 
 	FF = VAFp + (1 - VAFm)
 	print("#[INFO] Estimation of Foetal fraction : ", FF)
