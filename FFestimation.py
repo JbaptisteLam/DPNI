@@ -70,6 +70,9 @@ def preprocess(mum, dad, foetal):
 	filter_foetus_homo = foetus.loc[(foetus['POS'].isin(homo)) & ((foetus['FCL2104751'].str.partition(':')[0] == "1/0") | (foetus['FCL2104751'].str.partition(':')[0] == "0/1"))]
 	
 	return filter_foetus, filter_foetus_homo
+
+def filteregions(dataframe):
+	return 
 	
 def estimateFF(filter, foetus):
 	AF_list = {} 
@@ -109,8 +112,9 @@ def getUMI(bamfile, position=False):
 	
 	'''
 	bam = pysam.AlignmentFile(bamfile, 'rb')
-	test = pysam.view("chr1:876499-876499", bamfile).stdout.read()
-	print(test)
+	for variants in position: #"chr1:876499-876499"
+		read = pysam.view(bamfile, variants)
+		#reads = test.split('\n')[0] #TODO create unique value of UMI and count
 	#samtools view input.bam "Chr10:18000-45500" > output.bam
 	
 	return 
