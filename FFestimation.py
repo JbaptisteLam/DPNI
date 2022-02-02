@@ -6,6 +6,7 @@ Mother homozygous for a alternate allele and fetus got reference allele
 VAFm = 1 - (0,5 * FF)
 
 FF = VAFpaverage+(1-VAFm average)
+https://doi.org/10.3390/biotech10030017
 
 """
 
@@ -15,6 +16,7 @@ from os.path import join as osj
 import argparse
 import os
 import pandas as pd
+import pysam
 import re
 import subprocess
 import sys
@@ -100,6 +102,19 @@ def estimateFF(filter, foetus):
 	print("#[INFO] VAF average: ", VAF)
 	return VAF
 
+
+def getUMI(bamfile, position=False):
+	'''
+	get number of different UMI carring alternate base for a given position
+	
+	'''
+	bam = pysam.AlignmentFile(bamfile, 'rb')
+	test = pysam.view("chr1:876499-876499", bamfile).stdout.read()
+	print(test)
+	#samtools view input.bam "Chr10:18000-45500" > output.bam
+	
+	return 
+	
 @lru_cache
 def vcfTodataframe(file, rheader=False):
 
@@ -159,4 +174,5 @@ def main():
 	print("#[INFO] Estimation of Foetal fraction : ", FF)
 
 if __name__ == "__main__":
-	main()
+	#main()
+	getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam")
