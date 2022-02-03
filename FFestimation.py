@@ -72,6 +72,14 @@ def preprocess(mum, dad, foetal):
 	return filter_foetus, filter_foetus_homo
 
 def filteregions(dataframe):
+	"""
+	Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
+	Sims, D.; Sudbery, I.; Ilot, N.E.; Heger, A.; Ponting, C.P. Sequencing depth and coverage: Key considerations in genomic analyses.
+Nat. Rev. Genet. 2014, 15, 121–132.
+	MAF > 5% and got dbSNP ID (could also use gnomAD stats)
+	"""
+	
+
 	return 
 	
 def estimateFF(filter, foetus):
@@ -105,18 +113,39 @@ def estimateFF(filter, foetus):
 	print("#[INFO] VAF average: ", VAF)
 	return VAF
 
+def dataframetoregions(dataframe, save=False):
+	bed = dataframe.get(['#CHROM', 'POS', 'POS'])
+	print(bed.head())
+	if len(bed.index) == 0:
+		print("ERROR col #CHROM or POS are missing from VCF exit")
+		exit()
+	bed.set_axis(['#CHROM', 'START', 'END'], axis=1, inplace=True)
+	if save:
+		bed.to_csv(save, index=False, header=False, sep='\t')
+	return bed 
 
-def getUMI(bamfile, position=False):
+def getUMI(bamfile, position):
 	'''
-	get number of different UMI carring alternate base for a given position
+	get number of different UMI carring alternate base for a given position #TODO
 	
 	'''
-	bam = pysam.AlignmentFile(bamfile, 'rb')
-	for variants in position: #"chr1:876499-876499"
-		read = pysam.view(bamfile, variants)
-		#reads = test.split('\n')[0] #TODO create unique value of UMI and count
-	#samtools view input.bam "Chr10:18000-45500" > output.bam
-	
+	zscore = {}
+	#bam = pysam.AlignmentFile(bamfile, 'rb')
+	for i, variants in position.iterrows(): #"chr1:876499-876499"
+		print(variants)
+		zscore[variants['START']] = []
+		pos = str(variants['#CHROM'])+':'+str(variants['START'])+'-'+str(variants['END'])
+		read = pysam.view(bamfile, pos)
+		for reads in read.split('\n'):
+			fields = reads.split('\t')
+			#print(type(fields[0]))
+			for items in fields:
+				if items.startswith('RX') and items not in zscore[variants['START']]:
+					print(items)
+					zscore[variants['START']].append(items.split(':')[-1])
+			
+		print(zscore)
+		exit()
 	return 
 	
 @lru_cache
@@ -173,10 +202,11 @@ def main():
 	filter_father, filter_mother = preprocess(args.mum, args.dad, args.foetus)
 	VAFp = estimateFF(filter_father, ffname)
 	VAFm = estimateFF(filter_mother, ffname)
-
+	pos = dataframetoregions(filter_father)
+	getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam", pos)
 	FF = VAFp + (1 - VAFm)
 	print("#[INFO] Estimation of Foetal fraction : ", FF)
 
 if __name__ == "__main__":
-	#main()
-	getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam")
+	main()
+	#getUMI()
