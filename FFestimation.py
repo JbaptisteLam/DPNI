@@ -42,21 +42,33 @@ def systemcall(command):
 def average(iterable):
 	return round(sum(iterable) / len(iterable), 4)
 
-def preprocess(mum, dad, foetal):
+def preprocess(mum, dad, foetal, filetype):
 	'''
 	input: tsv of variants from trio family
 	output: variant inside VAFp and VAFm statements in tsv format
 	'''
+	print(locals())
 	for j, values in locals().items():
-		filename = osj(os.path.dirname(values), os.path.basename(values).split('.')[0]+'.pickle')
-		if not os.path.exists(filename):
-			vcfTodataframe(filename)
+		filename = values+'.pickle'
+		if not os.path.exists(filename) and j != 'filetype':
+			if filetype == 'vcf':
+				vcfTodataframe(filename)
+			else:
+				print(values)
+				tsvTodataframe(values)
+	
+	#FOR TSV only
+	mother = pd.read_pickle(mum+'.pickle')
+	father = pd.read_pickle(dad+'.pickle')
+	foetus = pd.read_pickle(foetal+'.pickle')
+	
+	filter_foetus, filter_foetus_homo = processtsv(mother, father, foetus)
 
-	mother = pd.read_pickle(osj(os.path.dirname(mum), os.path.basename(mum).split('.')[0]+'.pickle'))
-	father = pd.read_pickle(osj(os.path.dirname(dad), os.path.basename(dad).split('.')[0]+'.pickle'))
-	foetus = pd.read_pickle(osj(os.path.dirname(foetal), os.path.basename(foetal).split('.')[0]+'.pickle'))
-	dataframe = [ mother, father, foetus]
-	for datafs in dataframe:
+	return filter_foetus, filter_foetus_homo
+
+def processvcf(mother, father, foetus):
+	dataframe_list = [ mother, father, foetus]
+	for datafs in dataframe_list:
 		datafs = datafs.loc[(datafs['REF'] == '.') | (datafs['ALT'] == '.') | (datafs['REF'].str.len() > 1) | (datafs['ALT'].str.len() > 1)]
 	##foetus heterozygote avec alternate allele provenant du père
 	filter_foetus = foetus.loc[(~foetus['POS'].isin(mother['POS'].to_list()))]
@@ -68,10 +80,27 @@ def preprocess(mum, dad, foetal):
 	print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
 
 	filter_foetus_homo = foetus.loc[(foetus['POS'].isin(homo)) & ((foetus['FCL2104751'].str.partition(':')[0] == "1/0") | (foetus['FCL2104751'].str.partition(':')[0] == "0/1"))]
-	
 	return filter_foetus, filter_foetus_homo
 
-def filteregions(dataframe):
+def processtsv(mother, father, foetus):
+	dataframe_list = [ mother, father, foetus]
+	for datafs in dataframe_list:
+		datafs = datafs.loc[datafs['varType'] == 'substitution']
+	##foetus heterozygote avec alternate allele provenant du père
+	filter_foetus = foetus.loc[(~foetus['start'].isin(mother['start'].to_list()))]
+	print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(filter_foetus))
+	
+	#foetus heterozygote avec alternate allele provenant de la mère sachant variant homozygote et père ayant donné un allèle de reference
+	homotmp = mother.loc[mother['zygosity'] == "hom"]
+	homo = homotmp['start'].to_list()
+	print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
+
+	filter_foetus_homo = foetus.loc[(foetus['start'].isin(homo)) & (foetus['zygosity'] == 'het')]
+	return filter_foetus, filter_foetus_homo
+	
+
+
+def globalfilter(dataframe):
 	"""
 	Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
 	Sims, D.; Sudbery, I.; Ilot, N.E.; Heger, A.; Ponting, C.P. Sequencing depth and coverage: Key considerations in genomic analyses.
@@ -79,47 +108,53 @@ Nat. Rev. Genet. 2014, 15, 121–132.
 	MAF > 5% and got dbSNP ID (could also use gnomAD stats)
 	"""
 	
-
-	return 
+	df = dataframe['rsMAF'].str.replace(',', '.').astype('float')
+	#MAF dbsnp 5% so common variant in population, and got dbsnp variant btw
+	filter = df.loc[(df['rsMAF'] > 0.05) & (~df['rsId'].isnull())]
+	return filter
 	
+#def estimateFF(filter, foetus):
+#	#FOR VCF #DEPRECATED
+#	AF_list = {} 
+#	VAF_list = []
+#	for j, var in filter.iterrows():
+#		AF_list[var['POS']] = {}
+#		for i, fields in enumerate(var['FORMAT'].split(':')):
+#			AF_list[var['POS']][fields] = var[foetus].split(':')[i]
+#		for  features in var['INFO'].split(';'):
+#			if '=' in features:
+#				keys = features.split('=')[0]
+#				value = features.split('=')[1]
+#				AF_list[var['POS']][keys] = value
+#			else:
+#				AF_list[var['POS']]['infos'] = features
+#
+#
+#	for var in AF_list.values():
+#		if 'VAF' in var:
+#			VAF_list.append(float(var.get('VAF')))
+#		else:
+#			VAF_list.append(float(var.get('AF')))
+#	VAF = average(VAF_list)
+#
+#	VAF_list = []
+#	for var in AF_list.values():
+#		if 'VAF' in var:
+#			VAF_list.append(float(var['VAF']))
+#	VAF = average(VAF_list)
+#	print("#[INFO] VAF average: ", VAF)
+#	return VAF
+
 def estimateFF(filter, foetus):
-	AF_list = {} 
-	VAF_list = []
-	for j, var in filter.iterrows():
-		AF_list[var['POS']] = {}
-		for i, fields in enumerate(var['FORMAT'].split(':')):
-			AF_list[var['POS']][fields] = var[foetus].split(':')[i]
-		for  features in var['INFO'].split(';'):
-			if '=' in features:
-				keys = features.split('=')[0]
-				value = features.split('=')[1]
-				AF_list[var['POS']][keys] = value
-			else:
-				AF_list[var['POS']]['infos'] = features
-
-
-	for var in AF_list.values():
-		if 'VAF' in var:
-			VAF_list.append(float(var.get('VAF')))
-		else:
-			VAF_list.append(float(var.get('AF')))
-	VAF = average(VAF_list)
-
-	VAF_list = []
-	for var in AF_list.values():
-		if 'VAF' in var:
-			VAF_list.append(float(var['VAF']))
-	VAF = average(VAF_list)
-	print("#[INFO] VAF average: ", VAF)
+	VAF = filter['alleleFrequency'].str.replace(',', '.').astype('float').mean()
 	return VAF
 
 def dataframetoregions(dataframe, save=False):
-	bed = dataframe.get(['#CHROM', 'POS', 'POS'])
-	print(bed.head())
+	bed = dataframe.get(['chr', 'start', 'end'])
 	if len(bed.index) == 0:
-		print("ERROR col #CHROM or POS are missing from VCF exit")
+		print("ERROR col are missing from  file exit")
 		exit()
-	bed.set_axis(['#CHROM', 'START', 'END'], axis=1, inplace=True)
+	#bed.set_axis(['#CHROM', 'START', 'END'], axis=1, inplace=True)
 	if save:
 		bed.to_csv(save, index=False, header=False, sep='\t')
 	return bed 
@@ -188,24 +223,30 @@ def vcfTodataframe(file, rheader=False):
 		dfVar.to_pickle(osj(os.path.dirname(file), name+'.pickle'))
 		return dfVar
 
+def tsvTodataframe(file):
+	df = pd.read_csv(file, sep='\t', skiprows=2, header=0)
+	df.to_pickle(file+'.pickle')
+	return df
+
 def parseargs():
-	parser = argparse.ArgumentParser(description="Filter tsv in DPNI and POOL context, basically tsv have to come from varank analysis ")
+	parser = argparse.ArgumentParser(description="TODO")
 	parser.add_argument("-d", "--dad", type=str, help="Absolute path of vcf variant from father")
 	parser.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)")
 	parser.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother")
+	parser.add_argument("-t", "--type", default='tsv', type=str, help="vcf or tsv, default tsv")
 	args = parser.parse_args()
 	return args
 
 def main():
 	args = parseargs()
 	ffname = os.path.basename(args.foetus).split('.')[0]
-	filter_father, filter_mother = preprocess(args.mum, args.dad, args.foetus)
+	filter_father, filter_mother = preprocess(args.mum, args.dad, args.foetus, args.type)
 	VAFp = estimateFF(filter_father, ffname)
 	VAFm = estimateFF(filter_mother, ffname)
-	pos = dataframetoregions(filter_father)
-	getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam", pos)
-	FF = VAFp + (1 - VAFm)
-	print("#[INFO] Estimation of Foetal fraction : ", FF)
+	print(dataframetoregions(filter_father))
+	#getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam", pos)
+	#FF = VAFp + (1 - VAFm)
+	#print("#[INFO] Estimation of Foetal fraction : ", FF)
 
 if __name__ == "__main__":
 	main()
