@@ -11,6 +11,8 @@ https://doi.org/10.3390/biotech10030017
 """
 
 
+from calendar import monthrange
+import faulthandler
 from functools import lru_cache
 from os.path import join as osj
 import argparse
@@ -21,6 +23,8 @@ import pysam
 import re
 import subprocess
 import sys
+
+#git combo FF, dossier TEST TODO
 
 def print_progress_bar(i, max):
 	'''
@@ -43,64 +47,87 @@ def systemcall(command):
 def average(iterable):
 	return round(sum(iterable) / len(iterable), 4)
 
-def preprocess(mum, dad, foetal, filetype):
-	'''
-	input: tsv of variants from trio family
-	output: variant inside VAFp and VAFm statements in tsv format
-	'''
-	print(locals())
-	for j, values in locals().items():
-		filename = values+'.pickle'
-		if not os.path.exists(filename) and j != 'filetype':
-			if filetype == 'vcf':
-				vcfTodataframe(filename)
-			else:
-				print(values)
-				tsvTodataframe(values)
-	
-	#FOR TSV only
-	mother = pd.read_pickle(mum+'.pickle')
-	father = pd.read_pickle(dad+'.pickle')
-	foetus = pd.read_pickle(foetal+'.pickle')
-	
-	filter_foetus, filter_foetus_homo = processtsv(mother, father, foetus)
+class Process:
+	def __init__(self, mother, father, foetus):
+		self.mother = mother
+		self.father = father
+		self.foetus = foetus
 
-	return filter_foetus, filter_foetus_homo
-
-def processvcf(mother, father, foetus):
-	dataframe_list = [ mother, father, foetus]
-	for datafs in dataframe_list:
-		datafs = datafs.loc[(datafs['REF'] == '.') | (datafs['ALT'] == '.') | (datafs['REF'].str.len() > 1) | (datafs['ALT'].str.len() > 1)]
-	##foetus heterozygote avec alternate allele provenant du père
-	filter_foetus = foetus.loc[(~foetus['POS'].isin(mother['POS'].to_list()))]
-	print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(filter_foetus))
+	def preprocess(self, filetype):
+		'''
+		input: tsv of variants from trio family
+		output: variant inside VAFp and VAFm statements in tsv format
+		'''
+		print(locals())
+		for j, values in locals().items():
+			filename = values+'.pickle'
+			if not os.path.exists(filename) and j != 'filetype':
+				if filetype == 'vcf':
+					vcfTodataframe(filename)
+				else:
+					print(values)
+					tsvTodataframe(values)
+		
+		#FOR TSV only
+		mother = pd.read_pickle(self.mother+'.pickle')
+		father = pd.read_pickle(self.father+'.pickle')
+		foetus = pd.read_pickle(self.foetus+'.pickle')
+		
+		filter_foetus, filter_foetus_homo = self.processtsv(mother, father, foetus)
 	
-	#foetus heterozygote avec alternate allele provenant de la mère sachant variant homozygote et père ayant donné un allèle de reference
-	homotmp = mother.loc[mother['ASG2104747'].str.partition(':')[0] == "1/1"]
-	homo = homotmp['POS'].to_list()
-	print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
-
-	filter_foetus_homo = foetus.loc[(foetus['POS'].isin(homo)) & ((foetus['FCL2104751'].str.partition(':')[0] == "1/0") | (foetus['FCL2104751'].str.partition(':')[0] == "0/1"))]
-	return filter_foetus, filter_foetus_homo
-
-def processtsv(mother, father, foetus):
-	dataframe_list = [ mother, father, foetus]
-	for datafs in dataframe_list:
-		datafs = datafs.loc[datafs['varType'] == 'substitution']
-	##foetus heterozygote avec alternate allele provenant du père
-	filter_foetus = foetus.loc[(~foetus['start'].isin(mother['start'].to_list()))]
-	print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(filter_foetus))
+		return filter_foetus, filter_foetus_homo
 	
-	#foetus heterozygote avec alternate allele provenant de la mère sachant variant homozygote et père ayant donné un allèle de reference
-	homotmp = mother.loc[mother['zygosity'] == "hom"]
-	homo = homotmp['start'].to_list()
-	print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
-
-	filter_foetus_homo = foetus.loc[(foetus['start'].isin(homo)) & (foetus['zygosity'] == 'het')]
-	print(filter_foetus.head())
-	print(filter_foetus_homo.head())
-	return filter_foetus, filter_foetus_homo
+	def processvcf(self, mother, father, foetus):
+		dataframe_list = [ mother, father, foetus]
+		for datafs in dataframe_list:
+			datafs = datafs.loc[(datafs['REF'] == '.') | (datafs['ALT'] == '.') | (datafs['REF'].str.len() > 1) | (datafs['ALT'].str.len() > 1)]
+		##foetus heterozygote avec alternate allele provenant du père
+		filter_foetus = foetus.loc[(~foetus['POS'].isin(mother['POS'].to_list()))]
+		print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(filter_foetus))
+		
+		#foetus heterozygote avec alternate allele provenant de la mère sachant variant homozygote et père ayant donné un allèle de reference
+		homotmp = mother.loc[mother['ASG2104747'].str.partition(':')[0] == "1/1"]
+		homo = homotmp['POS'].to_list()
+		print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
 	
+		filter_foetus_homo = foetus.loc[(foetus['POS'].isin(homo)) & ((foetus['FCL2104751'].str.partition(':')[0] == "1/0") | (foetus['FCL2104751'].str.partition(':')[0] == "0/1"))]
+		return filter_foetus, filter_foetus_homo
+	
+	def processtsv(self, mother, father, foetus):
+		dataframe_list = [ mother, father, foetus]
+		for datafs in dataframe_list:
+			datafs = datafs.loc[datafs['varType'] == 'substitution']
+		##foetus heterozygote avec alternate allele provenant du père
+		filter_foetus = foetus.loc[(~foetus['start'].isin(mother['start'].to_list()))]
+		print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(filter_foetus))
+		
+		#foetus heterozygote avec alternate allele provenant de la mère sachant variant homozygote et père ayant donné un allèle de reference
+		homotmp = mother.loc[mother['zygosity'] == "hom"]
+		homo = homotmp['start'].to_list()
+		print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
+	
+		filter_foetus_homo = foetus.loc[(foetus['start'].isin(homo)) & (foetus['zygosity'] == 'het')]
+		print(filter_foetus.head())
+		print(filter_foetus_homo.head())
+		return filter_foetus, filter_foetus_homo
+
+class Paternalidentification(Process):
+	def __init__(self, mother, father , foetus):
+		super().__init_(mother, father, foetus)
+	
+	def subtract_maternal(foetus, mother):
+		'''
+		input: dataframe of maternal blood (unknown FF) and mother as Index Case --> 100 %
+		'''
+		paternal_id_SNV = mother['variantID'].to_list()
+		paternal_id_InDels = mother['cNomen'].to_list()
+		df_subtract = foetus.loc[(~foetus['variantID'].isin(paternal_id_SNV)) | (~foetus['cNomen'].isin(paternal_id_InDels))]
+		return df_subtract
+
+	def identify_paternal(foetus_filter, father):
+
+		return
+
 def globalfilter(df, rmasker, output, pattern):
 	"""
 	Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
@@ -132,37 +159,8 @@ Nat. Rev. Genet. 2014, 15, 121–132.
 
 	return filter
 	
-#def estimateFF(filter, foetus):
-#	#FOR VCF #DEPRECATED
-#	AF_list = {} 
-#	VAF_list = []
-#	for j, var in filter.iterrows():
-#		AF_list[var['POS']] = {}
-#		for i, fields in enumerate(var['FORMAT'].split(':')):
-#			AF_list[var['POS']][fields] = var[foetus].split(':')[i]
-#		for  features in var['INFO'].split(';'):
-#			if '=' in features:
-#				keys = features.split('=')[0]
-#				value = features.split('=')[1]
-#				AF_list[var['POS']][keys] = value
-#			else:
-#				AF_list[var['POS']]['infos'] = features
-#
-#
-#	for var in AF_list.values():
-#		if 'VAF' in var:
-#			VAF_list.append(float(var.get('VAF')))
-#		else:
-#			VAF_list.append(float(var.get('AF')))
-#	VAF = average(VAF_list)
-#
-#	VAF_list = []
-#	for var in AF_list.values():
-#		if 'VAF' in var:
-#			VAF_list.append(float(var['VAF']))
-#	VAF = average(VAF_list)
-#	print("#[INFO] VAF average: ", VAF)
-#	return VAF
+def getsensibility(dfoetal, dfparents):
+	return
 
 def estimateFF(filter):
 	VAF = filter['alleleFrequency'].str.replace(',', '.').astype('float').mean()
@@ -262,7 +260,9 @@ def parseargs():
 def main():
 	args = parseargs()
 	ffname = os.path.basename(args.foetus).split('.')[0]
-	filter_father, filter_mother = preprocess(args.mum, args.dad, args.foetus, args.type)
+	
+	
+	filter_father, filter_mother = Process(args.mum, args.dad, args.foetus, args.type)
 	
 
 	VAFp = estimateFF(globalfilter(filter_father, args.rmasker, args.output, 'filter_father'))
