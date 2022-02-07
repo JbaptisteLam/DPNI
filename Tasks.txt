@@ -1,0 +1,17 @@
+#Protocole dans le dossier publication
+
+Une première analyse cherchera à estimer la fraction foetale à partir du fichier vcf du plasma
+o soustraction des variations d’origine maternelle
+o identification des variations d’origine paternelle
+o estimation de la fraction allélique observée
+- Puis, recherche des mutations foetales SNV et indel de novo dans la liste des gènes OMIM
+morbides
+- Puis, dans les données parentales concernant des variations des gènes OMIM morbides
+o recherche des CNV pathogènes chez les parents
+o recherche de variations à l’état hétérozygote pour les pathologies récessives autosomiques
+dans le même gène chez les 2 parents
+o recherche de variations pathogènes liées à l’X chez la mère, en cas de foetus de sexe masculin
+o recherche de variations dominantes autosomiques d’origine maternelle ou paternelle (dans ce
+dernier cas, vérification de la présence de la variation dans le vcf ou les bam issus de l’ADN
+plasmatique)
+

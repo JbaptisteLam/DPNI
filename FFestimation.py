@@ -15,6 +15,7 @@ from functools import lru_cache
 from os.path import join as osj
 import argparse
 import os
+from unicodedata import numeric
 import pandas as pd
 import pysam
 import re
@@ -96,21 +97,39 @@ def processtsv(mother, father, foetus):
 	print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
 
 	filter_foetus_homo = foetus.loc[(foetus['start'].isin(homo)) & (foetus['zygosity'] == 'het')]
+	print(filter_foetus.head())
+	print(filter_foetus_homo.head())
 	return filter_foetus, filter_foetus_homo
 	
-
-
-def globalfilter(dataframe):
+def globalfilter(df, rmasker, output, pattern):
 	"""
 	Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
 	Sims, D.; Sudbery, I.; Ilot, N.E.; Heger, A.; Ponting, C.P. Sequencing depth and coverage: Key considerations in genomic analyses.
 Nat. Rev. Genet. 2014, 15, 121–132.
 	MAF > 5% and got dbSNP ID (could also use gnomAD stats)
 	"""
-	
-	df = dataframe['rsMAF'].str.replace(',', '.').astype('float')
+	print("#[INFO] dtypes ", df.dtypes['rsMAF'])
+	if not df.dtypes['rsMAF'] == 'float64':
+		df['rsMAF'] = df['rsMAF'].str.replace(',', '.').astype('float')
+	df['totalReadDepth'] = df['totalReadDepth'].astype('int')
+
 	#MAF dbsnp 5% so common variant in population, and got dbsnp variant btw
-	filter = df.loc[(df['rsMAF'] > 0.05) & (~df['rsId'].isnull())]
+	tmp = df.loc[(df['rsMAF'] > 0.05) & (~df['rsId'].isnull()) & (df['totalReadDepth'] > 30)]
+	tmp.loc[:, 'chr'] = 'chr'+tmp.chr
+
+	bedname = osj(output, pattern)
+	foetusfilter = osj(output, pattern+'out')
+
+	#repeatmasker
+	dataframetoregions(tmp, bedname)
+	print("#[INFO] BEDTOOLS Processing ... ")
+	systemcall("bedtools intersect -v -a "+bedname+" -b "+rmasker+" -wa > "+foetusfilter)
+	foetus_df = pd.read_csv(foetusfilter, sep='\t')
+	foetus_df = foetus_df.set_axis(['chr','start', 'stop'], axis='columns') 
+	print(tmp.head())
+	print(foetus_df.head())
+	filter = tmp.loc[tmp['start'].isin(foetus_df['start'].to_list())]
+
 	return filter
 	
 #def estimateFF(filter, foetus):
@@ -145,11 +164,11 @@ Nat. Rev. Genet. 2014, 15, 121–132.
 #	print("#[INFO] VAF average: ", VAF)
 #	return VAF
 
-def estimateFF(filter, foetus):
+def estimateFF(filter):
 	VAF = filter['alleleFrequency'].str.replace(',', '.').astype('float').mean()
 	return VAF
 
-def dataframetoregions(dataframe, save=False):
+def dataframetoregions(dataframe, save):
 	bed = dataframe.get(['chr', 'start', 'end'])
 	if len(bed.index) == 0:
 		print("ERROR col are missing from  file exit")
@@ -234,6 +253,9 @@ def parseargs():
 	parser.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)")
 	parser.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother")
 	parser.add_argument("-t", "--type", default='tsv', type=str, help="vcf or tsv, default tsv")
+	parser.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/DPNI/trio/repeatmasker.bed', type=str, help="repeatmaskerfile")
+	parser.add_argument("-o", "--output", default='/home1/data/STARK/data/DPNI/trio/TWIST', type=str, help='name of outputfolder')
+	
 	args = parser.parse_args()
 	return args
 
@@ -241,12 +263,20 @@ def main():
 	args = parseargs()
 	ffname = os.path.basename(args.foetus).split('.')[0]
 	filter_father, filter_mother = preprocess(args.mum, args.dad, args.foetus, args.type)
-	VAFp = estimateFF(filter_father, ffname)
-	VAFm = estimateFF(filter_mother, ffname)
-	print(dataframetoregions(filter_father))
+	
+
+	VAFp = estimateFF(globalfilter(filter_father, args.rmasker, args.output, 'filter_father'))
+	print("#[INFO] VAFp ", VAFp)
+
+	VAFm = estimateFF(globalfilter(filter_mother, args.rmasker, args.output, 'filter_mother'))
+	print("#[INFO] VAFm ", VAFm)
+
+	#VAFp = estimateFF(filter_father, ffname)
+	#VAFm = estimateFF(filter_mother, ffname)
+	#print(dataframetoregions(filter_father))
 	#getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam", pos)
-	#FF = VAFp + (1 - VAFm)
-	#print("#[INFO] Estimation of Foetal fraction : ", FF)
+	FF = VAFp + (1 - VAFm)
+	print("#[INFO] Estimation of Foetal fraction : ", FF)
 
 if __name__ == "__main__":
 	main()
