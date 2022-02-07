@@ -49,8 +49,8 @@ def average(iterable):
 
 class Process:
 	def __init__(self, mother, father, foetus):
-		self.mother = mother
-		self.father = father
+		self.mother = self.filterquality(mother)
+		self.father = self.filterquality(father)
 		self.foetus = foetus
 
 	def preprocess(self, filetype):
@@ -76,7 +76,11 @@ class Process:
 		filter_foetus, filter_foetus_homo = self.processtsv(mother, father, foetus)
 	
 		return filter_foetus, filter_foetus_homo
-	
+
+	def filterquality(df):
+		filter = df.loc[(df['varReadPercent'] > 30) & (df['varReadDepth'] > 30) & (df['QUALphred'] >300)]
+		return df
+
 	def processvcf(self, mother, father, foetus):
 		dataframe_list = [ mother, father, foetus]
 		for datafs in dataframe_list:
@@ -114,20 +118,35 @@ class Process:
 class Paternalidentification(Process):
 	def __init__(self, mother, father , foetus):
 		super().__init_(mother, father, foetus)
-	
+
 	def subtract_maternal(foetus, mother):
 		'''
 		input: dataframe of maternal blood (unknown FF) and mother as Index Case --> 100 %
+		output: dataframe keep only variants from Father, foetus and potentially denovo
 		'''
-		paternal_id_SNV = mother['variantID'].to_list()
-		paternal_id_InDels = mother['cNomen'].to_list()
-		df_subtract = foetus.loc[(~foetus['variantID'].isin(paternal_id_SNV)) | (~foetus['cNomen'].isin(paternal_id_InDels))]
+		maternal_id_SNV = mother['variantID'].to_list()
+		maternal_id_InDels = mother['cNomen'].to_list()
+		df_subtract = foetus.loc[(~foetus['variantID'].isin(maternal_id_SNV)) | (~foetus['cNomen'].isin(maternal_id_InDels))]
 		return df_subtract
 
 	def identify_paternal(foetus_filter, father):
+		'''
+		input: fetal dataframe where commom variant with mother have been discarded
+		output: try to estimate denovo variant and FF
+		'''
+		if not foetus_filter.dtypes['alleleFrequency'] == 'float64':
+			foetus_filter['alleleFrequency'] = foetus_filter['alleleFrequency'].str.replace(',', '.').astype('float')
+		paternal = foetus_filter.loc[(foetus_filter['alleleFrequency'] >= 3.5) & (foetus_filter['alleleFrequency'] <= 7.5)]
+		#Probably denovo
+		denovo = foetus_filter.loc[(foetus_filter['alleleFrequency'] > 7.5)]
+		return paternal, denovo
 
-		return
+		
 
+
+
+
+#PURE FETAL FRACTION ESTIMATION based on publciation below
 def globalfilter(df, rmasker, output, pattern):
 	"""
 	Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
