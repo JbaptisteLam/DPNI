@@ -127,6 +127,8 @@ class Paternalidentification(Process):
 		maternal_id_SNV = mother['variantID'].to_list()
 		maternal_id_InDels = mother['cNomen'].to_list()
 		df_subtract = foetus.loc[(~foetus['variantID'].isin(maternal_id_SNV)) | (~foetus['cNomen'].isin(maternal_id_InDels))]
+
+		#foetus_from_m = foetus.loc[(foetus['variantID'].isin(maternal_id_SNV)) | (foetus['cNomen'].isin(maternal_id_InDels))]
 		return df_subtract
 
 	def identify_paternal(foetus_filter, father):
@@ -139,9 +141,18 @@ class Paternalidentification(Process):
 		paternal = foetus_filter.loc[(foetus_filter['alleleFrequency'] >= 3.5) & (foetus_filter['alleleFrequency'] <= 7.5)]
 		#Probably denovo
 		denovo = foetus_filter.loc[(foetus_filter['alleleFrequency'] > 7.5)]
+		
 		return paternal, denovo
 
-		
+	def getFF(foetus_from_p, foetus_filter):
+		#df = pd.concat([foetus_from_m, foetus_from_p], axis=1, ignore_index=True)
+		var = []
+		for i, variants in foetus_from_p.iterrows():
+			if variants['variantID'] in foetus_filter['variantID']:
+				if variants['zygosity'] == 'hom' and variants['alleleFrequency'] >:
+				df = foetus_from_p.loc[foetus_from_p['variantID']]
+		#remove double line for homozygote variant 
+		df_filter = df.drop_duplicates(subset=['variantID', 'cNomen'], keep='First')
 
 
 
