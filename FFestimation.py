@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 """
 Mother homozigous for reference allele and foetus got alternate allele from the father 
 VAFp = 1/2 FF
@@ -12,12 +14,10 @@ https://doi.org/10.3390/biotech10030017
 
 
 from calendar import monthrange
-import faulthandler
 from functools import lru_cache
 from os.path import join as osj
 import argparse
 import os
-from unicodedata import numeric
 import pandas as pd
 import pysam
 import re
@@ -25,6 +25,7 @@ import subprocess
 import sys
 
 #git combo FF, dossier TEST TODO
+
 @lru_cache
 def vcfTodataframe(file, rheader=False):
 
@@ -93,9 +94,17 @@ def systemcall(command):
 def average(iterable):
 	return round(sum(iterable) / len(iterable), 4)
 
+def getheader(file):
+	with open(file, 'r') as f:
+		header = []
+		for lines in f:
+			line = lines.strip()
+			header.append(line)
+	return header
+
 class Process:
-	def __init__(self, mother, father, foetus, filetype, output):
-		m, d, f = self.preprocess(mother, father, foetus, filetype, output)
+	def __init__(self, mother, father, foetus, filetype, output, filterqual):
+		m, d, f = self.preprocess(mother, father, foetus, filetype, output, filterqual)
 		self.mother = m
 		self.father = d
 		self.foetus = f
@@ -103,8 +112,15 @@ class Process:
 		print("#[INFO] Length mother variants ", len(self.mother.index))
 		print("#[INFO] Length father variants ", len(self.father.index))
 		print("#[INFO] Length foetus variants ", len(self.foetus.index))
-
-	def preprocess(self, mother, father, foetus, filetype, output):
+		self.header = {}
+		fam = ['mother', 'father', 'foetus']
+		for i, path in locals().items():
+			if i in fam:
+				name = os.path.basename(path).split('.')[0]
+				self.header[name] = getheader(path)
+				
+	
+	def preprocess(self, mother, father, foetus, filetype, output, filterqual):
 		'''
 		input: tsv of variants from trio family
 		output: pickle object for whole family
@@ -122,8 +138,13 @@ class Process:
 						tsvTodataframe(values)
 		
 		#FOR TSV only
-		mother = self.filterquality(pd.read_pickle(mother+'.pickle'))
-		father = self.filterquality(pd.read_pickle(father+'.pickle'))
+		if filterqual:
+			mother = self.filterquality(pd.read_pickle(mother+'.pickle'))
+			father = self.filterquality(pd.read_pickle(father+'.pickle'))
+		else:
+			mother = pd.read_pickle(mother+'.pickle')
+			father = pd.read_pickle(father+'.pickle')
+
 		foetus = pd.read_pickle(foetus+'.pickle')
 		
 		#filter_foetus, filter_foetus_homo = self.processtsv(self.filterquality(mother), self.filterquality(father), foetus)
@@ -168,8 +189,8 @@ class Process:
 		return filter_foetus, filter_foetus_homo
 
 class Paternalidentification(Process):
-	def __init__(self, mother, father , foetus, filetype):
-		super().__init__(mother, father , foetus, filetype)
+	def __init__(self, mother, father , foetus, filetype, output, filterqual):
+		super().__init__(mother, father , foetus, filetype, output, filterqual)
 
 	def subtract_maternal(self):
 		'''
@@ -225,8 +246,8 @@ class Paternalidentification(Process):
 		self.getFF(paternal_var, sub)
 
 class homozygotebased(Process):
-	def __init__(self, mother, father , foetus, filetype):
-		super().__init__(mother, father , foetus, filetype)
+	def __init__(self, mother, father , foetus, filetype, output, filterqual):
+		super().__init__(mother, father , foetus, filetype, output, filterqual)
 
 
 	#PURE FETAL FRACTION ESTIMATION based on publciation below
@@ -306,12 +327,12 @@ class homozygotebased(Process):
 def parseargs(): #TODO continue subparser and add ML docker in script
 	parser = argparse.ArgumentParser(description="TODO")
 	subparsers = parser.add_subparsers()
-	parser_a = subparsers.add_parser('standard', help='Standard use of FFestimation.py TRIO')
-	parser_b = subparsers.add_parser('paternal', help='Estimation of FF based on variant comming from father TRIO')
+	parser_a = subparsers.add_parser('standard',type=str, help='Standard use of FFestimation.py TRIO', dest='command')
+	parser_b = subparsers.add_parser('paternal', type=str, help='Estimation of FF based on variant comming from father TRIO', dest='command')
 
-	parser_c = subparsers.add_parser('combo_ff', help='ML model to estimate FF based on seqFF and regression model using read depth profile Maternal BLOOD only')
+	parser_c = subparsers.add_parser('seqff', type=str, help='ML model to estimate FF based on seqFF and regression model using read depth profile Maternal BLOOD only', dest='command')
 
-
+	parser.add_argument("-q", "--quality", action='store_false', type=bool, help="Activate filtering on parents variants file, discarded variants with varReadDepth < 30, varReadPercent < 30 and qual Phred < 300, default True, set arg to remove filtering")
 	parser.add_argument("-d", "--dad", type=str, help="Absolute path of vcf variant from father")
 	parser.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)")
 	parser.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother")
@@ -323,33 +344,30 @@ def parseargs(): #TODO continue subparser and add ML docker in script
 	return args
 
 
-
 def main():
 	args = parseargs()
 	#ffname = os.path.basename(args.foetus).split('.')[0]
-	
-	#1) From CDC of DPNI study
-	pi = Paternalidentification(args.mum, args.dad, args.foetus, args.type)
-	pi.main_paternal()
+	if args.command == 'standard':
+		#1) From CDC of DPNI study
+		pi = Paternalidentification(args.mum, args.dad, args.foetus, args.type, args.output, args.quality)
+		pi.main_paternal()
 	
 	#2) From combo_FF seqFF modele
-	#TODO cmd docker
-
-
+	elif args.command == 'seqff':
+		print("In developpement exit !")
+		exit()
+		
 	#3) From publication with UMI standard deviation
-	#VAFp = estimateFF(globalfilter(filter_father, args.rmasker, args.output, 'filter_father'))
-	#print("#[INFO] VAFp ", VAFp)
-#
-	#VAFm = estimateFF(globalfilter(filter_mother, args.rmasker, args.output, 'filter_mother'))
-	#print("#[INFO] VAFm ", VAFm)
+	elif args.command == 'paternal':
+		p = homozygotebased(args.mum, args.dad, args.foetus, args.type, args.output, args.quality)
+		VAFp = p.estimateFF(p.globalfilter(args.dad, args.rmasker, args.output, 'filter_father'))
+		VAFm = p.estimateFF(p.globalfilter(args.mum, args.rmasker, args.output, 'filter_mother'))
+		FF = VAFp + (1 - VAFm)
+		print("#[INFO] Estimation of Foetal fraction : ", FF)
 
-	#VAFp = estimateFF(filter_father, ffname)
-	#VAFm = estimateFF(filter_mother, ffname)
-	#print(dataframetoregions(filter_father))
 	#getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam", pos)
 	#FF = VAFp + (1 - VAFm)
 	#print("#[INFO] Estimation of Foetal fraction : ", FF)
 
 if __name__ == "__main__":
 	main()
-	#getUMI()
