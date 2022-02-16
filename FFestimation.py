@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 """
+Python 3.8
 Mother homozigous for reference allele and foetus got alternate allele from the father 
 VAFp = 1/2 FF
 
@@ -11,6 +12,12 @@ FF = VAFpaverage+(1-VAFm average)
 https://doi.org/10.3390/biotech10030017
 
 """
+
+__authors__ = ("Jean-Baptiste Lamouche")
+__contact__ = ("jean-baptiste.lamouche@chru-strabsourg.fr")
+__copyright__ = "MIT"
+__date__ = "2022-02-01"
+__version__ = "0.1"
 
 
 from calendar import monthrange
@@ -23,6 +30,7 @@ import pysam
 import re
 import subprocess
 import sys
+import docker
 
 #git combo FF, dossier TEST TODO
 
@@ -245,7 +253,7 @@ class Paternalidentification(Process):
 		paternal_var, denovo = self.identify_paternal(sub)
 		self.getFF(paternal_var, sub)
 
-class homozygotebased(Process):
+class Homozygotebased(Process):
 	def __init__(self, mother, father , foetus, filetype, output, filterqual):
 		super().__init__(mother, father , foetus, filetype, output, filterqual)
 
@@ -324,21 +332,64 @@ class homozygotebased(Process):
 			exit()
 		return 
 
+class Seqff():
+	def __init__(self, bamfoetus):
+		self.bamfoetus = bamfoetus
+
+	def readprofile(self, samtools, output):
+		bam = self.bamfoetus
+		stats = osj(output, "stats_samtools_"+os.path.basename(bam))
+		if not os.path.exists(stats):
+			print("#[INFO] Generate Reads profile "+stats)
+			systemcall(samtools+" stats "+bam+" > "+stats)
+		
+		#col stats file | insert size, pairs total, inward oriented pairs, outward oriented pairs, other pairs
+		dico = {}
+		if os.path.exists(stats):
+			with open(stats, 'r') as s:
+				for lines in s:
+					fields = lines.strip()
+					if fields.startswith("IS"):
+						col = fields.split('\t')
+						#taking pairs total column
+						dico[col[1]] = [col[2]]
+		tmp = pd.DataFrame.from_dict(dico, dtype='float64')
+
+		#For ML model we need 170 first features, read size from 50 to 220
+		df_stats = tmp.iloc[:, 50:221]
+		print(df_stats.columns)
+
+		return df_stats
+
+
 def parseargs(): #TODO continue subparser and add ML docker in script
 	parser = argparse.ArgumentParser(description="TODO")
 	subparsers = parser.add_subparsers()
-	parser_a = subparsers.add_parser('standard',type=str, help='Standard use of FFestimation.py TRIO', dest='command')
-	parser_b = subparsers.add_parser('paternal', type=str, help='Estimation of FF based on variant comming from father TRIO', dest='command')
+	parser_a = subparsers.add_parser('standard', help='Standard use of FFestimation.py TRIO')
+	parser_a.add_argument("-d", "--dad", type=str, help="Absolute path of vcf variant from father", required=True)
+	parser_a.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)", required=True)
+	parser_a.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother", required=True)
+	parser_a.add_argument("-t", "--type", default='tsv', type=str, help="vcf or tsv, default tsv")
+	parser_a.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/DPNI/trio/repeatmasker.bed', type=str, help="repeatmaskerfile")
+	parser_a.set_defaults(func='standard')
+	
+	
+	parser_b = subparsers.add_parser('paternal', help='Estimation of FF based on variant comming from father TRIO')
+	parser_b.add_argument("-d", "--dad", type=str, help="Absolute path of vcf variant from father", required=True)
+	parser_b.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)", required=True)
+	parser_b.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother", required=True)
+	parser_b.add_argument("-t", "--type", default='tsv', type=str, help="vcf or tsv, default tsv")
+	parser_b.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/DPNI/trio/repeatmasker.bed', type=str, help="repeatmaskerfile")
+	parser_b.set_defaults(func='paternal')
 
-	parser_c = subparsers.add_parser('seqff', type=str, help='ML model to estimate FF based on seqFF and regression model using read depth profile Maternal BLOOD only', dest='command')
 
-	parser.add_argument("-q", "--quality", action='store_false', type=bool, help="Activate filtering on parents variants file, discarded variants with varReadDepth < 30, varReadPercent < 30 and qual Phred < 300, default True, set arg to remove filtering")
-	parser.add_argument("-d", "--dad", type=str, help="Absolute path of vcf variant from father")
-	parser.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)")
-	parser.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother")
-	parser.add_argument("-t", "--type", default='tsv', type=str, help="vcf or tsv, default tsv")
-	parser.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/DPNI/trio/repeatmasker.bed', type=str, help="repeatmaskerfile")
-	parser.add_argument("-o", "--output", default='/home1/data/STARK/data/DPNI/trio/TWIST', type=str, help='name of outputfolder')
+	parser_c = subparsers.add_parser('seqff', help='ML model to estimate FF based on seqFF and regression model using read depth profile Maternal BLOOD only')
+	parser_c.add_argument("-bf", "--bfoetus", type=str, help="Absolute path of bam variant from cell free DNA, (maternal blood)", required=True)
+	parser_c.set_defaults(func='seqff')
+
+	parser.add_argument("-q", "--quality", action='store_true', help="Activate filtering on parents variants file, discarded variants with varReadDepth < 30, varReadPercent < 30 and qual Phred < 300, default True, set arg to remove filtering")
+	parser.add_argument("-o", "--output", default='/home1/data/STARK/data/DPNI/trio/TWIST', type=str, help='name of outputfolder', required=True)
+	parser.add_argument("-s", "--samtools", type=str, default="/home1/TOOLS/tools/samtools/current/bin/samtools", help="Abs path of samtools executable")
 	
 	args = parser.parse_args()
 	return args
@@ -347,23 +398,26 @@ def parseargs(): #TODO continue subparser and add ML docker in script
 def main():
 	args = parseargs()
 	#ffname = os.path.basename(args.foetus).split('.')[0]
-	if args.command == 'standard':
+	print(args)
+	if args.func == 'standard':
 		#1) From CDC of DPNI study
 		pi = Paternalidentification(args.mum, args.dad, args.foetus, args.type, args.output, args.quality)
 		pi.main_paternal()
 	
 	#2) From combo_FF seqFF modele
-	elif args.command == 'seqff':
-		print("In developpement exit !")
-		exit()
+	elif args.func == 'seqff':
+		print("#[INFO] In developpement exit !")
+		pseq = Seqff(args.bfoetus)
+		print(pseq.readprofile(args.samtools, args.output))
 		
 	#3) From publication with UMI standard deviation
-	elif args.command == 'paternal':
-		p = homozygotebased(args.mum, args.dad, args.foetus, args.type, args.output, args.quality)
+	elif args.func == 'paternal':
+		p = Homozygotebased(args.mum, args.dad, args.foetus, args.type, args.output, args.quality)
 		VAFp = p.estimateFF(p.globalfilter(args.dad, args.rmasker, args.output, 'filter_father'))
 		VAFm = p.estimateFF(p.globalfilter(args.mum, args.rmasker, args.output, 'filter_mother'))
 		FF = VAFp + (1 - VAFm)
 		print("#[INFO] Estimation of Foetal fraction : ", FF)
+
 
 	#getUMI("/home1/data/STARK/data/DPNI/trio/TWIST/FCL2104751.bwamem.bam", pos)
 	#FF = VAFp + (1 - VAFm)
