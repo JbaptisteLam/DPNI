@@ -20,17 +20,18 @@ __date__ = "2022-02-01"
 __version__ = "0.1"
 
 
-from calendar import monthrange
 from functools import lru_cache
 from os.path import join as osj
 import argparse
+from tkinter import image_names
+import docker
 import os
 import pandas as pd
 import pysam
-import re
+import time
 import subprocess
 import sys
-import docker
+
 
 #git combo FF, dossier TEST TODO
 
@@ -333,8 +334,13 @@ class Homozygotebased(Process):
 		return 
 
 class Seqff():
-	def __init__(self, bamfoetus):
+	def __init__(self, bamfoetus): #mount, image, k_fold, container_name
 		self.bamfoetus = bamfoetus
+		#self.client = docker.APIClient(base_url='unix://var/run/docker.sock', timeout=10000)
+		#self.config = self.client.create_host_config(binds=mount)
+		#self.image = image
+		#self.k_fold = k_fold
+		#self.container_name = container_name
 
 	def readprofile(self, samtools, output):
 		bam = self.bamfoetus
@@ -356,10 +362,54 @@ class Seqff():
 		tmp = pd.DataFrame.from_dict(dico, dtype='float64')
 
 		#For ML model we need 170 first features, read size from 50 to 220
-		df_stats = tmp.iloc[:, 50:221]
-		print(df_stats.columns)
+		df_stats = tmp.iloc[:, 50:220].copy()
+		df_stats.loc[0, '220'] = 0.0910165153462862
+		df_stats.to_csv(osj(output, 'sample_test.tsv'), sep='\t', header=False, index=False)
 
+		#SEQFF analysis
+		#ml_folder = osj(output, 'data')
+		#if not os.path.exists(ml_folder):
+		#	print("#[INFO] Create "+ml_folder)
+		#	os.makedirs(ml_folder)
+#
+#
+		#	pre = "python3 preproces.py /DATA/TEST/combo_ff/example/dataset.tsv -k "+self.k_fold+" -s 19 -O "+ml_folder
+		#	self.runcontainer(pre)
+#
+		#	#Training ML
+		#	train = self.generatetrain(self, ml_folder)
+		#	self.runcontainer(train)
+#
+		#	#Aggregate testing results
+		#	systemcall('cat '+osj(ml_folder, "result")+"/*.tsv > "+osj(ml_folder, "result_fl.tsv"))
+		#	systemcall('cat '+osj(ml_folder, "combo", "result")+"/*.tsv > "+osj(ml_folder, "result_combo.tsv"))
+#
+#
+		#	#Predict sample
+		#	predict = self.generatepredict(self, output, sample)
+		#	self.runcontainer(predict)
+#
 		return df_stats
+
+	def runcontainer(self, cmd):
+		self.container = self.client.create_container(self.image, command=cmd, user='root', detach=True, tty=True, name=self.container_name, entrypoint="/bin/bash", volumes=self.mount, host_config=self.config)
+		self.client.start(container=self.container)
+		while self.client.inspect_container(container=self.container)['State']['Status'] == 'running':
+			time.sleep(30)
+		self.client.remove_container(container=self.container, force=True)
+		return
+
+	def generatetrain(self, output):
+		val = []
+		for i in range(self.k_fold):
+			val.append("python3 train_fl.py "+osj(output, "train_dataset_"+i+".tsv")+" "+osj(output, "test_dataset_"+i+".tsv")+" -o "+osj(output, "fl", "model", "model_"+i)+" -c "+osj(output, "combo", 	"coeff", "coeffs_"+i+".txt")+" -r "+osj(output, "combo", "result", "result_"+i+".tsv")+" >> "+osj(output, "predict.tsv"))
+		return ' '.join(val)
+	
+	def generatepredict(self, output, sample):
+		val = []
+		for i in range(self.k_fold):
+			val.append("python3 /DATA/TEST/predict.py "+sample+" "+osj(output, "fl", "model", "model_"+i)+" -c "+osj(output, "combo", "model", "model_"+i)+" -m "+osj(output, "data", "train_dataset_mean_"+i+".txt")+" -s "+osj(output, "data", "train_dataset_std_"+i+".txt")+" -v")
+		return ' '.join(val)
 
 
 def parseargs(): #TODO continue subparser and add ML docker in script
@@ -385,6 +435,10 @@ def parseargs(): #TODO continue subparser and add ML docker in script
 
 	parser_c = subparsers.add_parser('seqff', help='ML model to estimate FF based on seqFF and regression model using read depth profile Maternal BLOOD only')
 	parser_c.add_argument("-bf", "--bfoetus", type=str, help="Absolute path of bam variant from cell free DNA, (maternal blood)", required=True)
+	parser_c.add_argument("-m", "--mount", type=dict, default={'/home1/BAS/lamouchj/scripts':{ 'bind':'/DATA'}, '/home1/data/STARK/databases':{'bind':'/STARK/databases', 'mode': 'ro'}} ,help="Dict of values specify volume to mount")
+	parser_c.add_argument("-i", "--image", type=str, default='continuumio/miniconda3:latest', help="Image of seqFF container")
+	parser_c.add_argument("-k", "--kfold", type=int, default=5, help="Number of k_fold for cross validation")
+	parser_c.add_argument("-c", "--container", type=str, default="seqff_DPNI", help="container_name for seqFF ML analysis")
 	parser_c.set_defaults(func='seqff')
 
 	parser.add_argument("-q", "--quality", action='store_true', help="Activate filtering on parents variants file, discarded variants with varReadDepth < 30, varReadPercent < 30 and qual Phred < 300, default True, set arg to remove filtering")
@@ -408,7 +462,7 @@ def main():
 	elif args.func == 'seqff':
 		print("#[INFO] In developpement exit !")
 		pseq = Seqff(args.bfoetus)
-		print(pseq.readprofile(args.samtools, args.output))
+		print(pseq.readprofile(args.samtools, args.output)) #, args.mount, args.image, args.kfold, args.container)
 		
 	#3) From publication with UMI standard deviation
 	elif args.func == 'paternal':
