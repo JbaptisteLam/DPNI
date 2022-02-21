@@ -25,11 +25,14 @@ from os.path import join as osj
 import argparse
 from tkinter import image_names
 import docker
+import matplotlib.pyplot as plt
+import numpy as np
 import os
 import pandas as pd
 import pysam
 import time
 import subprocess
+import statistics
 import sys
 
 
@@ -111,6 +114,17 @@ def getheader(file):
 			header.append(line)
 	return header
 
+def plotvaf(df, output):
+	df_plot = df.pivot(columns='varType', values='alleleFrequency')
+	fig, ax = plt.subplots( figsize=(8,6))
+	df_plot.plot.hist(bins=100, alpha=0.9, ax=ax, title="VAF of foetal variations", grid=True, xticks=np.linspace(0, 1, 11).tolist())
+	ax.annotate('VAF med: '+str(statistics.median(df['alleleFrequency'].tolist())), xy=(2, 1), xytext=(3, 1.5))
+	ax.annotate('VAF mean: '+str(average(df['alleleFrequency'].tolist())), xy=(2, 2), xytext=(3, 1.5))
+	ax.annotate('VAF std: '+str(statistics.pstdev(df['alleleFrequency'].tolist())), xy=(2, 2), xytext=(3, 1.5))
+	fig.savefig(osj(output, "VAF_plot.jpeg"))
+	return osj(output, "VAF_plot.jpeg")
+
+
 class Process:
 	def __init__(self, mother, father, foetus, filetype, output, filterqual):
 		m, d, f = self.preprocess(mother, father, foetus, filetype, output, filterqual)
@@ -127,6 +141,7 @@ class Process:
 			if i in fam:
 				name = os.path.basename(path).split('.')[0]
 				self.header[name] = getheader(path)
+		self.output = output
 				
 	
 	def preprocess(self, mother, father, foetus, filetype, output, filterqual):
@@ -137,8 +152,9 @@ class Process:
 		print("#[INFO] Locals init items ", locals())
 		#make a pickle object in output folder if it not exists, even where the vcf are located
 		for j, values in locals().items():
-			if j != 'filetype' and j != 'self':
+			if j in ['mother', 'father', 'foetus']:
 				path = os.path.basename(values)
+				print("#[INFO] "+j+" "+path)
 				filename = osj(output, path+'.pickle')
 				if not os.path.exists(filename):
 					if filetype == 'vcf':
@@ -222,7 +238,14 @@ class Paternalidentification(Process):
 		'''
 		if not foetus_filter.dtypes['alleleFrequency'] == 'float64':
 			foetus_filter.loc[:, 'alleleFrequency'] = foetus_filter['alleleFrequency'].str.replace(',', '.').astype('float')
-		paternal = foetus_filter.loc[(foetus_filter['alleleFrequency'] >= 0.035) & (foetus_filter['alleleFrequency'] <= 0.075)]
+		#paternal = foetus_filter.loc[(foetus_filter['alleleFrequency'] >= 0.035) & (foetus_filter['alleleFrequency'] <= 0.075)]
+
+		paternal_id_SNV = foetus_filter['variantID'].to_list()
+		paternal_id_InDels = foetus_filter['cNomen'].to_list()
+		paternal = foetus_filter.loc[(foetus_filter['variantID'].isin(paternal_id_SNV)) | (foetus_filter['cNomen'].isin(paternal_id_InDels))]
+		#paternal.loc[:, 'alleleFrequency'] = paternal['alleleFrequency'].str.replace(',', '.').astype('float')
+
+		print("#[INFO] Variants common between denovo pool removing maternal and 100pct foetal "+str(len(paternal.index)))
 		#Probably denovo
 		denovo = foetus_filter.loc[(foetus_filter['alleleFrequency'] > 0.075)]
 		print("#[INFO] Variants comming from father between 4 and 15percent of FF ", len(paternal.index))
@@ -247,11 +270,12 @@ class Paternalidentification(Process):
 		#df_filter = df.drop_duplicates(subset=['variantID', 'cNomen'], keep='Last')
 
 		print("#[INFO] FF estimation: ", average(paternal['alleleFrequency']))
-		paternal.to_csv('test_ff.tsv', sep='\t', columns=paternal.columns, index=False)
+		#paternal.to_csv('test_ff.tsv', sep='\t', columns=paternal.columns, index=False)
 	
 	def main_paternal(self):
 		sub = self.subtract_maternal()
 		paternal_var, denovo = self.identify_paternal(sub)
+		plotvaf(paternal_var, self.output)
 		self.getFF(paternal_var, sub)
 
 class Homozygotebased(Process):
@@ -260,7 +284,7 @@ class Homozygotebased(Process):
 
 
 	#PURE FETAL FRACTION ESTIMATION based on publciation below
-	def globalfilter(self, df, rmasker, output, pattern):
+	def globalfilter(self, df, rmasker, output, pattern, bedtools):
 		"""
 		Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
 		Sims, D.; Sudbery, I.; Ilot, N.E.; Heger, A.; Ponting, C.P. Sequencing depth and coverage: Key considerations in genomic analyses.
@@ -276,20 +300,26 @@ class Homozygotebased(Process):
 		tmp = df.loc[(df['rsMAF'] > 0.05) & (~df['rsId'].isnull()) & (df['totalReadDepth'] > 30)]
 		tmp.loc[:, 'chr'] = 'chr'+tmp.chr
 
+		#name of dataframe of variants to bed
 		bedname = osj(output, pattern)
-		foetusfilter = osj(output, pattern+'out')
+		foetusfilter = osj(output, pattern+'.out')
 
+		print(tmp)
+		print(tmp['chr'])
 		#repeatmasker
-		self.dataframetoregions(tmp, bedname)
+		bed = self.dataframetoregions(tmp, bedname, True)
 		print("#[INFO] BEDTOOLS Processing ... ")
-		systemcall("bedtools intersect -v -a "+bedname+" -b "+rmasker+" -wa > "+foetusfilter)
-		foetus_df = pd.read_csv(foetusfilter, sep='\t')
-		foetus_df = foetus_df.set_axis(['chr','start', 'stop'], axis='columns') 
-		print(tmp.head())
-		print(foetus_df.head())
-		filter = tmp.loc[tmp['start'].isin(foetus_df['start'].to_list())]
-
-		return filter
+		systemcall(bedtools+" intersect -v -a "+bed+" -b "+rmasker+" -wa > "+foetusfilter)
+		if os.path.exists(foetusfilter):
+			foetus_df = pd.read_csv(foetusfilter, sep='\t')
+			foetus_df = foetus_df.set_axis(['chr','start', 'stop'], axis='columns') 
+			print(tmp.head())
+			print(foetus_df.head())
+			filter = tmp.loc[tmp['start'].isin(foetus_df['start'].to_list())]
+			return filter
+		else:
+			print("ERROR "+foetusfilter+" does not exists check your bedtools install exit !")
+			exit()
 
 	def getsensibility(self, dfoetal, dfparents):
 		#TODO
@@ -299,15 +329,16 @@ class Homozygotebased(Process):
 		VAF = filter['alleleFrequency'].str.replace(',', '.').astype('float').mean()
 		return VAF
 
-	def dataframetoregions(self, dataframe, save):
-		bed = dataframe.get(['chr', 'start', 'end'])
+	def dataframetoregions(self, dataframe, bedname, save):
+		print(dataframe)
+		bed = dataframe.loc[:, ['chr', 'start', 'end']]
 		if len(bed.index) == 0:
-			print("ERROR col are missing from  file exit")
+			print("ERROR col are missing from file exit")
 			exit()
 		#bed.set_axis(['#CHROM', 'START', 'END'], axis=1, inplace=True)
 		if save:
-			bed.to_csv(save, index=False, header=False, sep='\t')
-		return bed 
+			bed.to_csv(bedname, index=False, header=False, sep='\t')
+		return bedname
 
 	def getUMI(self, bamfile, position):
 		'''
@@ -413,14 +444,14 @@ class Seqff():
 
 
 def parseargs(): #TODO continue subparser and add ML docker in script
-	parser = argparse.ArgumentParser(description="TODO")
+	parser = argparse.ArgumentParser(description="FFestimation.py aims to analyze family variants especially in case of prenatal diagnosis. Developped in Strasbourg CHRU in the genetical diagnosis lab by bioinformatic team, it will be use as a routine tool integrated in STARK module")
 	subparsers = parser.add_subparsers()
 	parser_a = subparsers.add_parser('standard', help='Standard use of FFestimation.py TRIO')
 	parser_a.add_argument("-d", "--dad", type=str, help="Absolute path of vcf variant from father", required=True)
 	parser_a.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)", required=True)
 	parser_a.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother", required=True)
 	parser_a.add_argument("-t", "--type", default='tsv', type=str, help="vcf or tsv, default tsv")
-	parser_a.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/DPNI/trio/repeatmasker.bed', type=str, help="repeatmaskerfile")
+	parser_a.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/repeatmasker.bed', type=str, help="repeatmaskerfile")
 	parser_a.set_defaults(func='standard')
 	
 	
@@ -429,7 +460,8 @@ def parseargs(): #TODO continue subparser and add ML docker in script
 	parser_b.add_argument("-f", "--foetus", type=str, help="Absolute path of vcf variant from cell free DNA, (maternal blood)", required=True)
 	parser_b.add_argument("-m", "--mum", type=str, help="Absolute path of vcf variant from mother", required=True)
 	parser_b.add_argument("-t", "--type", default='tsv', type=str, help="vcf or tsv, default tsv")
-	parser_b.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/DPNI/trio/repeatmasker.bed', type=str, help="repeatmaskerfile")
+	parser_b.add_argument("-b", "--bedtools", default='/home1/TOOLS/tools/bedtools/current/bin/bedtools', type=str, help="Abs path of bedtools executable")
+	parser_b.add_argument("-r", "--rmasker", default='/home1/data/STARK/data/repeatmasker.bed', type=str, help="repeatmaskerfile")
 	parser_b.set_defaults(func='paternal')
 
 
@@ -467,8 +499,8 @@ def main():
 	#3) From publication with UMI standard deviation
 	elif args.func == 'paternal':
 		p = Homozygotebased(args.mum, args.dad, args.foetus, args.type, args.output, args.quality)
-		VAFp = p.estimateFF(p.globalfilter(args.dad, args.rmasker, args.output, 'filter_father'))
-		VAFm = p.estimateFF(p.globalfilter(args.mum, args.rmasker, args.output, 'filter_mother'))
+		VAFp = p.estimateFF(p.globalfilter(p.father, args.rmasker, args.output, 'filter_father', args.bedtools))
+		VAFm = p.estimateFF(p.globalfilter(p.mother, args.rmasker, args.output, 'filter_mother', args.bedtools))
 		FF = VAFp + (1 - VAFm)
 		print("#[INFO] Estimation of Foetal fraction : ", FF)
 
