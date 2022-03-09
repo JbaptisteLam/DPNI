@@ -35,6 +35,8 @@ import subprocess
 import statistics
 import sys
 
+	
+
 
 #git combo FF, dossier TEST TODO
 
@@ -115,14 +117,28 @@ def getheader(file):
 	return header
 
 def plotvaf(df, output):
-	df_plot = df.pivot(columns='varType', values='alleleFrequency')
+	df['varReadPercent'] = df['varReadPercent'].map(lambda varReadPercent: varReadPercent / 100)
+	#print(df['varReadPercent'].head())
+	print("#[INFO] Length paternal "+str(len(df.index)))
+	df_plot = df.pivot(columns='varType', values='varReadPercent')
 	fig, ax = plt.subplots( figsize=(8,6))
 	df_plot.plot.hist(bins=100, alpha=0.9, ax=ax, title="VAF of foetal variations", grid=True, xticks=np.linspace(0, 1, 11).tolist())
-	ax.annotate('VAF med: '+str(statistics.median(df['alleleFrequency'].tolist())), xy=(2, 1), xytext=(3, 1.5))
-	ax.annotate('VAF mean: '+str(average(df['alleleFrequency'].tolist())), xy=(2, 2), xytext=(3, 1.5))
-	ax.annotate('VAF std: '+str(statistics.pstdev(df['alleleFrequency'].tolist())), xy=(2, 2), xytext=(3, 1.5))
+	ax.annotate('VAF med: '+str(statistics.median(df['varReadPercent'].tolist())), xy=(2, 1), xytext=(3, 1.5))
+	ax.annotate('VAF mean: '+str(average(df['varReadPercent'].tolist())), xy=(2, 2), xytext=(3, 1.5))
+	ax.annotate('VAF std: '+str(statistics.pstdev(df['varReadPercent'].tolist())), xy=(2, 2), xytext=(3, 1.5))
 	fig.savefig(osj(output, "VAF_plot.jpeg"))
 	return osj(output, "VAF_plot.jpeg")
+
+def col_type_float(df, col):
+	if df.dtypes[col] == 'float64':
+		return df
+	elif df.dtypes[col] == 'int64':
+		df[col].astype('float64')
+		return df
+	else:
+		df[col].str.replace(',', '.').astype('float')
+		return  df
+	
 
 
 class Process:
@@ -164,6 +180,7 @@ class Process:
 		
 		#FOR TSV only
 		if filterqual:
+			print("#[INFO] Filterquality remove varReadPercent < 30 varReadDepth < 30 and qualphred < 300")
 			mother = self.filterquality(pd.read_pickle(mother+'.pickle'))
 			father = self.filterquality(pd.read_pickle(father+'.pickle'))
 		else:
@@ -176,10 +193,160 @@ class Process:
 		return mother, father, foetus
 
 	def filterquality(self, df):
-		filter = df.loc[(df['varReadPercent'] > 30) & (df['varReadDepth'] > 30) & (df['QUALphred'] >300)]
-		return df
+		filter = df.loc[(df['varReadPercent'] > 30) & (df['varReadDepth'] > 30) & (df['QUALphred'] > 300)]
+		return filter
 
-	def processvcf(self, mother, father, foetus):
+class Paternalidentification(Process):
+	def __init__(self, mother, father , foetus, filetype, output, filterqual):
+		super().__init__(mother, father , foetus, filetype, output, filterqual)
+
+	def subtract_maternal(self):
+		'''
+		input: dataframe of maternal blood (unknown FF) and mother as Index Case --> 100 %
+		output: dataframe keep only variants from Father, foetus and potentially denovo
+		'''
+		
+		maternal_id_SNV = self.mother.loc[self.mother['varType'] == 'substitution']['variantID'].to_list()
+		#print(maternal_id_SNV)
+		maternal_id_InDels = self.mother.loc[self.mother['varType'] != 'substitution']['cNomen'].to_list()
+		df_subtract_snp = self.foetus.loc[(~self.foetus['variantID'].isin(maternal_id_SNV)) & (self.foetus['varType'] == 'substitution')]
+		#print(df_subtract_snp.head())
+		df_subtract_indels = self.foetus.loc[(~self.foetus['cNomen'].isin(maternal_id_InDels)) & (self.foetus['varType'] != 'substitution')]
+		df_subtract = pd.concat([df_subtract_snp, df_subtract_indels], ignore_index=True)
+		#print(df_subtract.head())
+		#print(df_subtract.columns)
+		df_subtract.sort_values("varReadPercent")
+
+		#foetus_from_m = foetus.loc[(foetus['variantID'].isin(maternal_id_SNV)) | (foetus['cNomen'].isin(maternal_id_InDels))]
+		print("#[INFO] Length after removing mother variations ", len(df_subtract.index))
+		print("TSV after removal ", len(df_subtract.index))
+		#df_subtract.to_csv('SUBTRACT.tsv', sep='\t', index=False, columns=df_subtract.columns)
+		
+		return df_subtract
+
+	def identify_paternal(self, foetus_filter):
+		'''
+		input: fetal dataframe where commom variant with mother have been discarded
+		output: try to estimate denovo variant and FF
+		'''
+		if not foetus_filter.dtypes['varReadPercent'] == 'float64':
+			foetus_filter.loc[:, 'varReadPercent'] = foetus_filter['varReadPercent'].astype(str).str.replace(',', '.').astype('float')
+		
+
+		#TEST only var which are in 40 - 60 AF in father or supp to 90 to avoid dilution artefact
+		paternal_filter = self.father.loc[(self.father['varReadPercent'] > 40) & (self.father['varReadPercent'] < 60) | (self.father['varReadPercent'] > 90)]
+		
+		
+		#select variants which are present in father
+		paternal_id_SNV = paternal_filter.loc[paternal_filter['varType'] == 'substitution']['variantID'].to_list()
+		paternal_id_InDels = paternal_filter.loc[paternal_filter['varType'] != 'substitution']['cNomen'].to_list()
+
+		#select snp then indels and finally merge both filter, select only het in pool
+		paternal_snv = foetus_filter.loc[(foetus_filter['variantID'].isin(paternal_id_SNV)) & (foetus_filter['varType'] == 'substitution') & (foetus_filter['zygosity'] == 'het')]
+		paternal_indels = foetus_filter.loc[(foetus_filter['cNomen'].isin(paternal_id_InDels)) & (foetus_filter['varType'] != 'substitution') & (foetus_filter['zygosity'] == 'het')]
+		
+		paternal = pd.concat([paternal_snv, paternal_indels], ignore_index=True)
+
+		print("#[INFO] Variants common between denovo pool removing maternal and 100pct foetal "+str(len(paternal.index)))
+		#Probably denovo
+		denovo = foetus_filter.loc[(foetus_filter['varReadPercent'] > 0.075)]
+		#print("#[INFO] Variants comming from father between 4 and 15percent of FF ", len(paternal.index))
+		print("#[INFO] After all filter, probably denovo variants (normally high for now cuz using 100percent ES foetus ", len(denovo.index))
+		paternal.to_csv(osj(self.output, "paternal.tsv"), sep="\t", header=True, index=False)
+		
+		return paternal, denovo
+
+	def getFF(self, paternal, foetus_filter):
+		#equal to paternal if above func TODO
+		#df = pd.concat([foetus_from_m, foetus_from_p], axis=1, ignore_index=True)
+		#var = []
+		#for i, variants in paternal.iterrows():
+		#	if variants['variantID'] in foetus_filter['variantID'].to_list():
+		#		if variants['varReadPercent'] < 0.075:
+		#			var.append(variants)
+		#
+		#print("#[INFO] LEN VAR ",len(var))
+		##print(var[0:5])
+		##df = foetus_from_p.loc[foetus_from_p['variantID']]
+		#df = pd.DataFrame(var)
+		#remove double line for homozygote variant 
+		#df_filter = df.drop_duplicates(subset=['variantID', 'cNomen'], keep='Last')
+
+
+
+		print("#[INFO] FF estimation: ", average(paternal['varReadPercent']))
+		#paternal.to_csv('test_ff.tsv', sep='\t', columns=paternal.columns, index=False)
+	
+	def main_paternal(self):
+		sub = self.subtract_maternal()
+		paternal_var, denovo = self.identify_paternal(sub)
+		plotvaf(paternal_var, self.output)
+		self.getFF(paternal_var, sub)
+
+class Homozygotebased(Process):
+	def __init__(self, mother, father , foetus, filetype, output, filterqual):
+		super().__init__(mother, father , foetus, filetype, output, filterqual)
+		dataframe_list = [ mother, father, foetus]
+		
+		self.mother = self.mother.loc[self.mother['varType'] == 'substitution']
+		self.father = self.father.loc[self.father['varType'] == 'substitution']
+		self.foetus = self.foetus.loc[self.foetus['varType'] == 'substitution']
+		print(self.mother.varType.unique())
+
+	#PURE FETAL FRACTION ESTIMATION based on publciation below
+	def globalfilter(self, df, rmasker, output, pattern, bedtools):
+		"""
+		Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
+		Sims, D.; Sudbery, I.; Ilot, N.E.; Heger, A.; Ponting, C.P. Sequencing depth and coverage: Key considerations in genomic analyses.
+	Nat. Rev. Genet. 2014, 15, 121–132.
+		MAF > 5% and got dbSNP ID (could also use gnomAD stats)
+		"""
+
+
+		#MAF dbsnp 5% so common variant in population, and got dbsnp variant btw
+		df = col_type_float(df, 'rsMAF')
+		df['totalReadDepth'] = df['totalReadDepth'].astype('int')
+		#tmp = df.loc[(df['rsMAF'] > 0.05) & (~df['rsId'].isnull()) & (df['totalReadDepth'] > 30)]
+		#tmp.loc[:, 'chr'] = 'chr'+tmp.chr
+
+		df.loc[:, 'chr'] = 'chr'+df.chr
+
+		#name of dataframe of variants to bed
+		bedname = osj(output, pattern)
+		foetusfilter = osj(output, pattern+'.out')
+		#repeatmasker
+		bed = self.dataframetoregions(df, bedname, True)
+		print("#[INFO] BEDTOOLS Processing ... ")
+		if not os.path.exists(foetusfilter):
+			systemcall("/home1/TOOLS/tools/bedtools/current/bin/bedtools intersect -v -a "+bed+" -b "+rmasker+" -wa > "+foetusfilter)
+		if os.path.exists(foetusfilter):
+			foetus_df = pd.read_csv(foetusfilter, sep='\t')
+			foetus_df = foetus_df.set_axis(['chr','start', 'stop'], axis='columns') 
+			filter = df.loc[df['start'].isin(foetus_df['start'].to_list())]
+			return filter
+		else:
+			print("ERROR "+foetusfilter+" does not exists check your bedtools install exit !")
+			exit()
+
+	def getsensibility(self, dfoetal, dfparents):
+		#TODO
+		return
+
+
+	def estimateFF(self, filter):
+		if filter.dtypes['varReadPercent'] == 'float64':
+			VAF = filter['varReadPercent'].mean()
+			return VAF
+			
+		elif filter.dtypes['varReadPercent'] == 'int64':
+			VAF = filter['varReadPercent'].astype('float').mean()
+			return VAF
+		else:
+			print(filter.dtypes['varReadPercent'])
+			VAF = filter['varReadPercent'].str.replace(',', '.').astype('float').mean()
+			return VAF
+	
+	def processvcf(self):
 		dataframe_list = [ mother, father, foetus]
 		for datafs in dataframe_list:
 			datafs = datafs.loc[(datafs['REF'] == '.') | (datafs['ALT'] == '.') | (datafs['REF'].str.len() > 1) | (datafs['ALT'].str.len() > 1)]
@@ -195,142 +362,41 @@ class Process:
 		filter_foetus_homo = foetus.loc[(foetus['POS'].isin(homo)) & ((foetus['FCL2104751'].str.partition(':')[0] == "1/0") | (foetus['FCL2104751'].str.partition(':')[0] == "0/1"))]
 		return filter_foetus, filter_foetus_homo
 	
-	def processtsv(self, mother, father, foetus):
-		dataframe_list = [ mother, father, foetus]
-		for datafs in dataframe_list:
-			datafs = datafs.loc[datafs['varType'] == 'substitution']
-		##foetus heterozygote avec alternate allele provenant du père
-		filter_foetus = foetus.loc[(~foetus['start'].isin(mother['start'].to_list()))]
-		print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(filter_foetus))
+	def processtsv(self, mother, father):
+		
+		##Discard variants non present in father and mother but present in pool
+		#filter_foetus = self.foetus.loc[(~self.foetus['start'].isin(self.mother['start'].to_list())) & (~self.foetus['start'].isin(self.father['start'].to_list()))]
+		#print("INFO after no in both remove ", len(filter_foetus))
+
+		##foetus heterozygote avec alternate allele provenant du père ( second condition keep only heterozygote)
+		#print("INFO list mother ", len(list_mother))
+		#Check if there are really present in father and with "good AF"
+		#convert values to float
+		father = col_type_float(father, 'varReadPercent')
+
+		father_tmp = father.loc[(father['varReadPercent'] > 0.45) & (father['varReadPercent'] < 55) | (father['varReadPercent'] > 95)]
+		#Filter on quality only father variants
+		father_tmp = self.filterquality(father_tmp)
+		list_father = father_tmp['start'].to_list()
+
+		list_mother = mother['start'].to_list()
+		vafp = self.foetus.loc[(~self.foetus.start.isin(list_mother)) & (self.foetus.start.isin(list_father))]# & (self.foetus['start'].isin(father['start'].to_list())) & (self.foetus['zygosity'] == 'het')]
+		vafp = vafp.loc[vafp['zygosity'] == 'het']
+
+		print("#[INFO] Length alternate variant provide by father (mother is homozygote for reference allele)", len(vafp.index))
 		
 		#foetus heterozygote avec alternate allele provenant de la mère sachant variant homozygote et père ayant donné un allèle de reference
 		homotmp = mother.loc[mother['zygosity'] == "hom"]
 		homo = homotmp['start'].to_list()
-		print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(homotmp))
-	
-		filter_foetus_homo = foetus.loc[(foetus['start'].isin(homo)) & (foetus['zygosity'] == 'het')]
-		print(filter_foetus.head())
-		print(filter_foetus_homo.head())
-		return filter_foetus, filter_foetus_homo
-
-class Paternalidentification(Process):
-	def __init__(self, mother, father , foetus, filetype, output, filterqual):
-		super().__init__(mother, father , foetus, filetype, output, filterqual)
-
-	def subtract_maternal(self):
-		'''
-		input: dataframe of maternal blood (unknown FF) and mother as Index Case --> 100 %
-		output: dataframe keep only variants from Father, foetus and potentially denovo
-		'''
 		
-		maternal_id_SNV = self.mother['variantID'].to_list()
-		maternal_id_InDels = self.mother['cNomen'].to_list()
-		df_subtract = self.foetus.loc[(~self.foetus['variantID'].isin(maternal_id_SNV)) | (~self.foetus['cNomen'].isin(maternal_id_InDels))]
-
-		#foetus_from_m = foetus.loc[(foetus['variantID'].isin(maternal_id_SNV)) | (foetus['cNomen'].isin(maternal_id_InDels))]
-		print("#[INFO] Length after removing mother variations ", len(df_subtract.index))
-		return df_subtract
-
-	def identify_paternal(self, foetus_filter):
-		'''
-		input: fetal dataframe where commom variant with mother have been discarded
-		output: try to estimate denovo variant and FF
-		'''
-		if not foetus_filter.dtypes['alleleFrequency'] == 'float64':
-			foetus_filter.loc[:, 'alleleFrequency'] = foetus_filter['alleleFrequency'].str.replace(',', '.').astype('float')
-		#paternal = foetus_filter.loc[(foetus_filter['alleleFrequency'] >= 0.035) & (foetus_filter['alleleFrequency'] <= 0.075)]
-
-		paternal_id_SNV = foetus_filter['variantID'].to_list()
-		paternal_id_InDels = foetus_filter['cNomen'].to_list()
-		paternal = foetus_filter.loc[(foetus_filter['variantID'].isin(paternal_id_SNV)) | (foetus_filter['cNomen'].isin(paternal_id_InDels))]
-		#paternal.loc[:, 'alleleFrequency'] = paternal['alleleFrequency'].str.replace(',', '.').astype('float')
-
-		print("#[INFO] Variants common between denovo pool removing maternal and 100pct foetal "+str(len(paternal.index)))
-		#Probably denovo
-		denovo = foetus_filter.loc[(foetus_filter['alleleFrequency'] > 0.075)]
-		print("#[INFO] Variants comming from father between 4 and 15percent of FF ", len(paternal.index))
-		print("#[INFO] After all filter, probably denovo variants (normally high for now cuz using 100percent ES foetus ", len(denovo.index))
-		
-		return paternal, denovo
-
-	def getFF(self, paternal, foetus_filter):
-		#equal to paternal if above func TODO
-		#df = pd.concat([foetus_from_m, foetus_from_p], axis=1, ignore_index=True)
-		#var = []
-		#for i, variants in paternal.iterrows():
-		#	if variants['variantID'] in foetus_filter['variantID'].to_list():
-		#		if variants['alleleFrequency'] < 0.075:
-		#			var.append(variants)
-		#
-		#print("#[INFO] LEN VAR ",len(var))
-		##print(var[0:5])
-		##df = foetus_from_p.loc[foetus_from_p['variantID']]
-		#df = pd.DataFrame(var)
-		#remove double line for homozygote variant 
-		#df_filter = df.drop_duplicates(subset=['variantID', 'cNomen'], keep='Last')
-
-		print("#[INFO] FF estimation: ", average(paternal['alleleFrequency']))
-		#paternal.to_csv('test_ff.tsv', sep='\t', columns=paternal.columns, index=False)
 	
-	def main_paternal(self):
-		sub = self.subtract_maternal()
-		paternal_var, denovo = self.identify_paternal(sub)
-		plotvaf(paternal_var, self.output)
-		self.getFF(paternal_var, sub)
+		vafm = self.foetus.loc[(self.foetus['start'].isin(homo)) & (self.foetus['zygosity'] == 'het')]
+		print("#[INFO] Length allele from homozygote alternate variant provide by mother (father gave ref allele)", len(vafm.index))
 
-class Homozygotebased(Process):
-	def __init__(self, mother, father , foetus, filetype, output, filterqual):
-		super().__init__(mother, father , foetus, filetype, output, filterqual)
-
-
-	#PURE FETAL FRACTION ESTIMATION based on publciation below
-	def globalfilter(self, df, rmasker, output, pattern, bedtools):
-		"""
-		Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
-		Sims, D.; Sudbery, I.; Ilot, N.E.; Heger, A.; Ponting, C.P. Sequencing depth and coverage: Key considerations in genomic analyses.
-	Nat. Rev. Genet. 2014, 15, 121–132.
-		MAF > 5% and got dbSNP ID (could also use gnomAD stats)
-		"""
-		print("#[INFO] dtypes ", df.dtypes['rsMAF'])
-		if not df.dtypes['rsMAF'] == 'float64':
-			df['rsMAF'] = df['rsMAF'].str.replace(',', '.').astype('float')
-		df['totalReadDepth'] = df['totalReadDepth'].astype('int')
-
-		#MAF dbsnp 5% so common variant in population, and got dbsnp variant btw
-		tmp = df.loc[(df['rsMAF'] > 0.05) & (~df['rsId'].isnull()) & (df['totalReadDepth'] > 30)]
-		tmp.loc[:, 'chr'] = 'chr'+tmp.chr
-
-		#name of dataframe of variants to bed
-		bedname = osj(output, pattern)
-		foetusfilter = osj(output, pattern+'.out')
-
-		print(tmp)
-		print(tmp['chr'])
-		#repeatmasker
-		bed = self.dataframetoregions(tmp, bedname, True)
-		print("#[INFO] BEDTOOLS Processing ... ")
-		systemcall(bedtools+" intersect -v -a "+bed+" -b "+rmasker+" -wa > "+foetusfilter)
-		if os.path.exists(foetusfilter):
-			foetus_df = pd.read_csv(foetusfilter, sep='\t')
-			foetus_df = foetus_df.set_axis(['chr','start', 'stop'], axis='columns') 
-			print(tmp.head())
-			print(foetus_df.head())
-			filter = tmp.loc[tmp['start'].isin(foetus_df['start'].to_list())]
-			return filter
-		else:
-			print("ERROR "+foetusfilter+" does not exists check your bedtools install exit !")
-			exit()
-
-	def getsensibility(self, dfoetal, dfparents):
-		#TODO
-		return
-
-	def estimateFF(self, filter):
-		VAF = filter['alleleFrequency'].str.replace(',', '.').astype('float').mean()
-		return VAF
+		#print("MOTHER ", vafp.loc[(mother['start'] == 9783147)])
+		return vafp, vafm
 
 	def dataframetoregions(self, dataframe, bedname, save):
-		print(dataframe)
 		bed = dataframe.loc[:, ['chr', 'start', 'end']]
 		if len(bed.index) == 0:
 			print("ERROR col are missing from file exit")
@@ -375,7 +441,8 @@ class Seqff():
 
 	def readprofile(self, samtools, output):
 		bam = self.bamfoetus
-		stats = osj(output, "stats_samtools_"+os.path.basename(bam))
+		bamname = os.path.basename(bam).split('.')[0]
+		stats = osj(output, "stats_samtools_"+bamname)
 		if not os.path.exists(stats):
 			print("#[INFO] Generate Reads profile "+stats)
 			systemcall(samtools+" stats "+bam+" > "+stats)
@@ -394,8 +461,9 @@ class Seqff():
 
 		#For ML model we need 170 first features, read size from 50 to 220
 		df_stats = tmp.iloc[:, 50:220].copy()
-		df_stats.loc[0, '220'] = 0.0910165153462862
-		df_stats.to_csv(osj(output, 'sample_test.tsv'), sep='\t', header=False, index=False)
+		#df_stats.loc[0, '220'] = 0.0910165153462862
+		bamname = os.path.basename(bam).split('.')[0]
+		df_stats.to_csv(osj(output, bamname+'.tsv'), sep='\t', header=False, index=False)
 
 		#SEQFF analysis
 		#ml_folder = osj(output, 'data')
@@ -484,6 +552,9 @@ def parseargs(): #TODO continue subparser and add ML docker in script
 def main():
 	args = parseargs()
 	#ffname = os.path.basename(args.foetus).split('.')[0]
+	if not os.path.exists(args.output):
+		print("#[INFO] Create output folder "+args.output)
+		os.mkdir(args.output)
 	print(args)
 	if args.func == 'standard':
 		#1) From CDC of DPNI study
@@ -493,15 +564,32 @@ def main():
 	#2) From combo_FF seqFF modele
 	elif args.func == 'seqff':
 		print("#[INFO] In developpement exit !")
+		#bams = systemcall('find '+args.bfoetus+' -name "*.bwamem.bam" ! -name "*.validation.*"' )
+		#for bamfile in bams:
+#
+		#	#for files in os.listdir()
+		#	print("#[INFO] Bam "+bamfile)
+		#	pseq = Seqff(bamfile)
+		#	print(pseq.readprofile(args.samtools, args.output)) #, args.mount, args.image, args.kfold, args.container)
 		pseq = Seqff(args.bfoetus)
-		print(pseq.readprofile(args.samtools, args.output)) #, args.mount, args.image, args.kfold, args.container)
-		
+		print(pseq.readprofile(args.samtools, args.output))
 	#3) From publication with UMI standard deviation
 	elif args.func == 'paternal':
 		p = Homozygotebased(args.mum, args.dad, args.foetus, args.type, args.output, args.quality)
-		VAFp = p.estimateFF(p.globalfilter(p.father, args.rmasker, args.output, 'filter_father', args.bedtools))
-		VAFm = p.estimateFF(p.globalfilter(p.mother, args.rmasker, args.output, 'filter_mother', args.bedtools))
-		FF = VAFp + (1 - VAFm)
+		VAFp_tmp = p.globalfilter(p.father, args.rmasker, args.output, 'filter_father', args.bedtools)
+		VAFm_tmp = p.globalfilter(p.mother, args.rmasker, args.output, 'filter_mother', args.bedtools)
+
+		VAFp, VAFm = p.processtsv(VAFm_tmp, VAFp_tmp)
+		VAFp.to_csv(osj(args.output, 'VAFp.tsv'), sep='\t', header=True, index=False)
+		#print("MOTHER ", VAFp.loc[(VAFp['start'] == 9783147)])
+		VAFm.to_csv(osj(args.output, 'VAFm.tsv'), sep='\t', header=True, index=False)
+		print("#[INFO] VAFp df "+str(len(VAFp.index)))
+		print("#[INFO] VAFm df "+str(len(VAFm.index)))
+
+		print("#[INFO] VAFp estimate "+str(p.estimateFF(VAFp) / 100))
+		print("#[INFO] VAFm estimate "+str(p.estimateFF(VAFm) / 100))
+
+		FF = p.estimateFF(VAFp) / 100 + (1- p.estimateFF(VAFm) / 100)
 		print("#[INFO] Estimation of Foetal fraction : ", FF)
 
 
