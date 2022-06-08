@@ -111,7 +111,7 @@ def scatter_vaf(tsv, output, name, ff):
         showarrow=False,
         font=dict(
             family="Courier New, monospace",
-            size=,
+            size=20,
         ),
     )
     fig.update_xaxes(title_text="index")
@@ -473,11 +473,11 @@ class Paternalidentification(Process):
 class Homozygotebased(Process):
     def __init__(self, mother, father, foetus, filetype, output, filterqual):
         super().__init__(mother, father, foetus, filetype, output, filterqual)
-        dataframe_list = [mother, father, foetus]
 
         self.mother = self.mother.loc[self.mother["varType"] == "substitution"]
         self.father = self.father.loc[self.father["varType"] == "substitution"]
         self.foetus = self.foetus.loc[self.foetus["varType"] == "substitution"]
+        self.dataframe_list = [mother, father, foetus]
         print(self.mother.varType.unique())
 
     # PURE FETAL FRACTION ESTIMATION based on publciation below
@@ -543,14 +543,13 @@ class Homozygotebased(Process):
             return VAF
 
     def processvcf(self):
-        dataframe_list = [mother, father, foetus]
-        for datafs in dataframe_list:
-            datafs = datafs.loc[
-                (datafs["REF"] == ".")
-                | (datafs["ALT"] == ".")
-                | (datafs["REF"].str.len() > 1)
-                | (datafs["ALT"].str.len() > 1)
-            ]
+        # for datafs in self.dataframe_list:
+        #    datafs = datafs.loc[
+        #        (datafs["REF"] == ".")
+        #        | (datafs["ALT"] == ".")
+        #        | (datafs["REF"].str.len() > 1)
+        #        | (datafs["ALT"].str.len() > 1)
+        #    ]
         ##foetus heterozygote avec alternate allele provenant du père
         filter_foetus = foetus.loc[(~foetus["POS"].isin(mother["POS"].to_list()))]
         print(
@@ -587,15 +586,13 @@ class Homozygotebased(Process):
         # convert values to float
         father = col_type_float(father, "varReadPercent")
 
-        father_tmp = father.loc[
-            (father["varReadPercent"] > 0.45) & (father["varReadPercent"] < 55)
-            | (father["varReadPercent"] > 95)
-        ]
-        # Filter on quality only father variants
-        father_tmp = self.filterquality(father_tmp)
-        list_father = father_tmp["start"].to_list()
+        # father_tmp = father.loc[
+        #    (father["varReadPercent"] > 0.45) & (father["varReadPercent"] < 55)
+        #    | (father["varReadPercent"] > 95)
+        # ]
+        list_father = self.father["start"].to_list()
 
-        list_mother = mother["start"].to_list()
+        list_mother = self.mother["start"].to_list()
         vafp = self.foetus.loc[
             (~self.foetus.start.isin(list_mother))
             & (self.foetus.start.isin(list_father))
