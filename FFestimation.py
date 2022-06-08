@@ -26,6 +26,7 @@ from pyfiglet import Figlet
 from io import StringIO
 import argparse
 import plotly.graph_objects as go
+import plotly.express as px
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -41,25 +42,36 @@ def fancystdout(style, text):
     subprocess.call("pyfiglet -f " + style + " '" + text + "' | lolcat ", shell=True)
 
 
-def scatter_vaf(tsv, output, name):
-    header = []
-    with open(tsv, "r") as f:
-        for lines in f:
-            if lines.startswith("##"):
-                header.append(lines.strip())
-            else:
-                break
-    if len(header) > 0:
-        print("#[INFO] header " + tsv, header)
-    df = pd.read_csv(tsv, sep="\t", skiprows=len(header), header=0)
+def scatter_vaf(tsv, output, name, ff):
+    if not isinstance(tsv, pd.DataFrame):
+        header = []
+        with open(tsv, "r") as f:
+            for lines in f:
+                if lines.startswith("##"):
+                    header.append(lines.strip())
+                else:
+                    break
+        # if len(header) > 0:
+        #    print("#[INFO] header " + tsv, header)
+        df = pd.read_csv(tsv, sep="\t", skiprows=len(header), header=0)
+    else:
+        df = tsv
     fig = go.Figure()
+    fig = px.scatter(
+        df,
+        x=df.index,
+        y=df["varReadPercent"],
+        trendline="lowess",
+        trendline_options=dict(frac=0.1),
+    )
+    fig.update_layout(showlegend=False)
     fig.add_trace(
         go.Scatter(
             y=df["varReadPercent"],
             x=df.index,
             customdata=np.stack(
                 (
-                    df["chr"],
+                    df["variantID"],
                     df["cNomen"],
                     df["gene"],
                     df["varReadPercent"],
@@ -72,6 +84,8 @@ def scatter_vaf(tsv, output, name):
                 color=df["varReadPercent"],
                 colorbar=dict(title="VAF colorscale"),
                 colorscale="Turbo",
+                size=12,
+                symbol="square",
             ),
             hovertemplate="<br>".join(
                 [
@@ -87,6 +101,18 @@ def scatter_vaf(tsv, output, name):
     fig.update_layout(
         title="Estimation of fetal fraction with allele frequency",
         legend_title_text="VAF",
+    )
+    fig.add_annotation(
+        text="FFestimation: " + str(ff) + " percent",
+        xref="paper",
+        yref="paper",
+        x=0.5,
+        y=0.3,
+        showarrow=False,
+        font=dict(
+            family="Courier New, monospace",
+            size=,
+        ),
     )
     fig.update_xaxes(title_text="index")
     fig.update_yaxes(title_text="VAF")
@@ -225,9 +251,9 @@ def col_type_float(df, col):
 class Process:
     def __init__(self, mother, father, foetus, filetype, output, filterqual):
         m, d, f = self.preprocess(mother, father, foetus, filetype, output, filterqual)
-        self.mother = m
-        self.father = d
-        self.foetus = f
+        self.mother = m.loc[m["varType"] == "substitution"]
+        self.father = d.loc[d["varType"] == "substitution"]
+        self.foetus = f.loc[f["varType"] == "substitution"]
         self.filetype = filetype
         print("#[INFO] Length mother variants ", len(self.mother.index))
         print("#[INFO] Length father variants ", len(self.father.index))
@@ -258,28 +284,60 @@ class Process:
                     else:
                         tsvTodataframe(values)
 
-        # FOR TSV only
+        # FOR TSV only #TODO
+        columns_list = ["alleleFrequency"]
         if filterqual:
             print(
                 "#[INFO] Filterquality remove varReadPercent < 30 varReadDepth < 30 and qualphred < 300"
             )
-            mother = self.filterquality(pd.read_pickle(mother + ".pickle"))
-            father = self.filterquality(pd.read_pickle(father + ".pickle"))
+            mother = self.filterquality(
+                self.col_type(pd.read_pickle(mother + ".pickle"), columns_list)
+            )
+            father = self.filterquality(
+                self.col_type(pd.read_pickle(father + ".pickle"), columns_list)
+            )
         else:
-            mother = pd.read_pickle(mother + ".pickle")
-            father = pd.read_pickle(father + ".pickle")
+            mother = self.col_type(pd.read_pickle(mother + ".pickle"), columns_list)
+            father = self.col_type(pd.read_pickle(father + ".pickle"), columns_list)
 
-        foetus = pd.read_pickle(foetus + ".pickle")
+        foetus = self.col_type(pd.read_pickle(foetus + ".pickle"), columns_list)
 
         # filter_foetus, filter_foetus_homo = self.processtsv(self.filterquality(mother), self.filterquality(father), foetus)
+        father.to_csv(
+            osj(output, "paternal_test.tsv"), sep="\t", header=True, index=False
+        )
+        print(foetus[["alleleFrequency"]].head())
         return mother, father, foetus
 
+    def col_type(self, df, columns_list):
+        print(columns_list)
+        for col in columns_list:
+            print(col)
+            print(df.dtypes[col])
+            if df.dtypes[col] != "float64":
+                df.loc[:, col] = (
+                    df[col].astype(str).str.replace(",", ".").astype("float")
+                )
+        return df
+
     def filterquality(self, df):
+        # old
+        # filter = df.loc[
+        #    (df["varReadPercent"] > 30)
+        #    & (df["varReadDepth"] > 30)
+        #    & (df["QUALphred"] > 300)
+        #    & (df["alleleFrequency"] < 0.02)
+        # ]
+        print("INFO")
+        print(df.dtypes["alleleFrequency"])
+        print(df.dtypes["totalReadDepth"])
         filter = df.loc[
-            (df["varReadPercent"] > 30)
-            & (df["varReadDepth"] > 30)
+            (df["varReadPercent"] > 20)
+            & (df["totalReadDepth"] > 20)
             & (df["QUALphred"] > 300)
+            & (df["alleleFrequency"] < 0.02)
         ]
+        print(df["alleleFrequency"])
         return filter
 
 
@@ -314,7 +372,7 @@ class Paternalidentification(Process):
         )
         # print(df_subtract.head())
         # print(df_subtract.columns)
-        df_subtract.sort_values("varReadPercent")
+        df_subtract.sort_values("varReadPercent", inplace=True)
 
         # foetus_from_m = foetus.loc[(foetus['variantID'].isin(maternal_id_SNV)) | (foetus['cNomen'].isin(maternal_id_InDels))]
         print(
@@ -330,13 +388,6 @@ class Paternalidentification(Process):
         input: fetal dataframe where commom variant with mother have been discarded
         output: try to estimate denovo variant and FF
         """
-        if not foetus_filter.dtypes["varReadPercent"] == "float64":
-            foetus_filter.loc[:, "varReadPercent"] = (
-                foetus_filter["varReadPercent"]
-                .astype(str)
-                .str.replace(",", ".")
-                .astype("float")
-            )
 
         # TEST only var which are in 40 - 60 AF in father or supp to 90 to avoid dilution artefact
         # paternal_filter = self.father.loc[
@@ -373,15 +424,15 @@ class Paternalidentification(Process):
         )
         # Probably denovo
         denovo = foetus_filter.loc[(foetus_filter["varReadPercent"] > 0.075)]
+
         # print("#[INFO] Variants comming from father between 4 and 15percent of FF ", len(paternal.index))
         print(
             "#[INFO] After all filter, probably denovo variants (normally high for now cuz using 100percent ES foetus ",
             len(denovo.index),
         )
-        paternal.to_csv(
-            osj(self.output, "paternal.tsv"), sep="\t", header=True, index=False
-        )
-
+        print(paternal.head())
+        print(paternal["varReadPercent"].max())
+        print(paternal["varReadPercent"])
         return paternal, denovo
 
     def getFF(self, paternal, foetus_filter):
@@ -399,15 +450,24 @@ class Paternalidentification(Process):
         # df = pd.DataFrame(var)
         # remove double line for homozygote variant
         # df_filter = df.drop_duplicates(subset=['variantID', 'cNomen'], keep='Last')
-
-        print("#[INFO] FF estimation: ", average(paternal["varReadPercent"]))
+        ff = round(average(paternal["varReadPercent"]), 2) * 2
+        print("#[INFO] FF estimation: " + str(ff))
         # paternal.to_csv('test_ff.tsv', sep='\t', columns=paternal.columns, index=False)
+        return ff
 
     def main_paternal(self):
         sub = self.subtract_maternal()
         paternal_var, denovo = self.identify_paternal(sub)
-        plotvaf(paternal_var, self.output)
-        self.getFF(paternal_var, sub)
+        paternal_var.sort_values("varReadPercent", ascending=True, inplace=True)
+
+        # In maternal blood keep only rare variant popfreq < 0.02 #TODO
+        paternal_var_rare = paternal_var.loc[paternal_var["alleleFrequency"] < 0.02]
+        paternal_var_rare.to_csv(
+            osj(self.output, "paternal.tsv"), sep="\t", header=True, index=False
+        )
+        ff = self.getFF(paternal_var_rare, sub)
+        plotvaf(paternal_var_rare, self.output)
+        scatter_vaf(paternal_var_rare, self.output, "vafFFestim", ff)
 
 
 class Homozygotebased(Process):
