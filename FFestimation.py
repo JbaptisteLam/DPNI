@@ -34,7 +34,7 @@ import pandas as pd
 import pysam
 import time
 import subprocess
-import statistics
+import statistics as sts
 import sys
 
 # git combo FF, dossier TEST TODO
@@ -42,7 +42,7 @@ def fancystdout(style, text):
     subprocess.call("pyfiglet -f " + style + " '" + text + "' | lolcat ", shell=True)
 
 
-def scatter_vaf(tsv, output, name, ff):
+def scatter_vaf(tsv, output, name, dico):
     if not isinstance(tsv, pd.DataFrame):
         header = []
         with open(tsv, "r") as f:
@@ -56,6 +56,8 @@ def scatter_vaf(tsv, output, name, ff):
         df = pd.read_csv(tsv, sep="\t", skiprows=len(header), header=0)
     else:
         df = tsv
+
+    dico = "<br>".join("{}={}".format(*i) for i in dico.items())
     fig = go.Figure()
     fig = px.scatter(
         df,
@@ -84,7 +86,7 @@ def scatter_vaf(tsv, output, name, ff):
                 color=df["varReadPercent"],
                 colorbar=dict(title="VAF colorscale"),
                 colorscale="Turbo",
-                size=12,
+                size=8,
                 symbol="square",
             ),
             hovertemplate="<br>".join(
@@ -103,7 +105,7 @@ def scatter_vaf(tsv, output, name, ff):
         legend_title_text="VAF",
     )
     fig.add_annotation(
-        text="FFestimation: " + str(ff) + " percent",
+        text="<b>Metrics</b> (all values *2)<br>" + dico,
         xref="paper",
         yref="paper",
         x=0.5,
@@ -118,6 +120,19 @@ def scatter_vaf(tsv, output, name, ff):
     fig.update_yaxes(title_text="VAF")
     fig.write_html(osj(output, name + ".html"))
     return fig
+
+
+def series_to_stats(series):
+    values = series.apply(lambda x: x * 2).to_list()
+
+    dico = {
+        "Mean": sts.mean(values),
+        "Median": sts.median(values),
+        "Mode": sts.mode(values),
+        "Stdev": sts.stdev(values),
+        "Variance": sts.variance(values),
+    }
+    return dico
 
 
 @lru_cache
@@ -185,6 +200,7 @@ def systemcall(command):
     *return list containing stdout lines*
     command - shell command (string)
     """
+    print("#[INFO] " + command)
     p = subprocess.Popen([command], stdout=subprocess.PIPE, shell=True)
     return p.stdout.read().decode("utf8").strip().split("\n")
 
@@ -219,7 +235,7 @@ def plotvaf(df, output):
         xticks=np.linspace(0, 1, 11).tolist(),
     )
     ax.annotate(
-        "VAF med: " + str(statistics.median(df["varReadPercent"].tolist())),
+        "VAF med: " + str(sts.median(df["varReadPercent"].tolist())),
         xy=(2, 1),
         xytext=(3, 1.5),
     )
@@ -229,7 +245,7 @@ def plotvaf(df, output):
         xytext=(3, 1.5),
     )
     ax.annotate(
-        "VAF std: " + str(statistics.pstdev(df["varReadPercent"].tolist())),
+        "VAF std: " + str(sts.pstdev(df["varReadPercent"].tolist())),
         xy=(2, 2),
         xytext=(3, 1.5),
     )
@@ -335,7 +351,7 @@ class Process:
             (df["varReadPercent"] > 20)
             & (df["totalReadDepth"] > 20)
             & (df["QUALphred"] > 300)
-            & (df["alleleFrequency"] < 0.02)
+            # & (df["alleleFrequency"] < 0.02)
         ]
         print(df["alleleFrequency"])
         return filter
@@ -460,14 +476,18 @@ class Paternalidentification(Process):
         paternal_var, denovo = self.identify_paternal(sub)
         paternal_var.sort_values("varReadPercent", ascending=True, inplace=True)
 
-        # In maternal blood keep only rare variant popfreq < 0.02 #TODO
-        paternal_var_rare = paternal_var.loc[paternal_var["alleleFrequency"] < 0.02]
+        # In maternal blood keep only rare variant(probably patho) popfreq < 0.02 #TODO
+        # paternal_var_rare = paternal_var.loc[paternal_var["alleleFrequency"] < 0.02]
+        paternal_var_rare = paternal_var
         paternal_var_rare.to_csv(
             osj(self.output, "paternal.tsv"), sep="\t", header=True, index=False
         )
         ff = self.getFF(paternal_var_rare, sub)
         plotvaf(paternal_var_rare, self.output)
-        scatter_vaf(paternal_var_rare, self.output, "vafFFestim", ff)
+        # Generate dico for annotation in plot
+
+        dico = series_to_stats(paternal_var_rare["varReadPercent"])
+        scatter_vaf(paternal_var_rare, self.output, "vafFFestim", dico)
 
 
 class Homozygotebased(Process):
@@ -502,8 +522,8 @@ class Homozygotebased(Process):
         foetusfilter = osj(output, pattern + ".out")
         # repeatmasker
         bed = self.dataframetoregions(df, bedname, True)
-        print("#[INFO] BEDTOOLS Processing ... ")
         if not os.path.exists(foetusfilter):
+            print("#[INFO] BEDTOOLS Processing ... ")
             systemcall(
                 "/home1/TOOLS/tools/bedtools/current/bin/bedtools intersect -v -a "
                 + bed
@@ -819,7 +839,7 @@ def parseargs():  # TODO continue subparser and add ML docker in script
     parser_a.add_argument(
         "-r",
         "--rmasker",
-        default="/home1/data/STARK/data/repeatmasker.bed",
+        default="/home1/BAS/lamouchj/scripts/DPNI/rmsk_norm.txt",
         type=str,
         help="repeatmaskerfile",
     )
@@ -862,7 +882,7 @@ def parseargs():  # TODO continue subparser and add ML docker in script
     parser_b.add_argument(
         "-r",
         "--rmasker",
-        default="/home1/data/STARK/data/repeatmasker.bed",
+        default="/home1/BAS/lamouchj/scripts/DPNI/rmsk_norm.txt",
         type=str,
         help="repeatmaskerfile",
     )
