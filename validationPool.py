@@ -672,7 +672,6 @@ def toPlot(
         df_miss = pd.concat([snvmiss, indelsmiss], ignore_index=True)
         df_miss.sort_values(by="varankVarScore", inplace=True, ascending=False)
 
-        writeTsv(df_miss, "missVariants", output)
         writeTsv(dfoundSNV, "SNVfound", output)
         writeTsv(dfoundInDels, "InDelsfound", output)
 
@@ -690,16 +689,21 @@ def toPlot(
         dfmother_proper, dfmother_opposite = filter_fp(
             dfmother, "mother_filter_opposite", output
         )
+        writeTsv(dfmother_opposite, "mother_filter_opposite", output)
         # print(dfmother_opposite.head())
         # print(*dfmother_proper.columns)
+
+        # obtain variant of mother only
         variants_mother_only = merge_df(
             total_ci, dfmother_proper, "variantID", "cNomen", "outer", "right_only"
         )
-        #
+        writeTsv(variants_mother_only, "mother_only", output)
+        # remove variants of mother in pool
         dfpool_filter = merge_df(
             dfpool, variants_mother_only, "variantID", "cNomen", "outer", "left_only"
         )
 
+        writeTsv(dfpool_filter, "pool_without_mother", output)
         false_pos = merge_df(
             dfpool_filter, positif, "variantID", "cNomen", "outer", "left_only"
         )
@@ -717,7 +721,11 @@ def toPlot(
 
         # generate informations on miss variants
         df_miss_process = add_cov(covfile, df_miss)
-        viz_go(df_miss_process, osj(output, "res_miss.html"))
+        df_miss_final = identify_miss(df_miss_process)
+        viz_go(df_miss_final, osj(output, "res_miss.html"))
+
+        writeTsv(positif, "all_positif_var", output)
+        writeTsv(df_miss_final, "missVariants", output)
 
     # uncomment to plot TODO
     # plotSensibilityHisto(snv_list_percent,others_list_percent, total_snv_list, total_others_list, len(snv_list_percent), output)
@@ -1100,7 +1108,7 @@ def merge_query(left, right, on, how, keep):
 def merge_df(left, right, on_snv, on_indels, how, keep):
     """
     left:dataframe to merge, right dataframe to merge, on column field, how to merge, keep row to keep default left_only
-    so only values present in left ore right are keep regarding args
+    so only values present in left or right are keept regarding args
     """
     if keep == "left_only":
         colid = "_x"
@@ -1157,7 +1165,10 @@ def main_stats():
         filter_snv = "variantID"
         filter_indels = "cNomen"
 
-    # remove variatns in pool which are opposite of variant with filter in fasle_fp func 23/05, VAF < 20 AD < 20 AFpop > 2
+    # keep opposite df
+    writeTsv(ci_fp_opposite, "cas_index_opposite", args.output)
+
+    # remove variants in pool which are opposite of variant with filter in fasle_fp func 23/05, VAF < 20 AD < 20 AFbaseinterne > 2
     # cas index 100 opposite
     opposite = ci_fp_opposite
     dfpool = merge_df(pool, opposite, "variantID", "cNomen", "outer", "left_only")
@@ -1240,45 +1251,6 @@ def viz(df, output):
     )
 
 
-# def viz_go(df, output):
-#    df = df.loc[df["varType"] == "substitution"]
-#    df = df.sort_values(by="Total_Depth", ascending=False)
-#    # print(df.head())
-#    # fig = go.Figure(layout=go.Layout(barmode="group"))
-#    fig = make_subplots(rows=2, cols=1)
-#    # test = [i for i in range(0, len(df.index) + 1, 1)]
-#    fig.update_layout(paper_bgcolor="#E3E3E3")
-#    # REMINDER CHANGE TYPE COL FROM OBJECT TO INT FOR PLOTLY TO AVOID SHITY ERROR
-#    # fig.add_trace(go.Bar(x=df["variantID"], y=df["A"].astype(int), name="test2"))
-#
-#
-#    for col in ["A", "C", "G", "T"]:
-#        fig.add_trace(
-#            go.Bar(x=df["variantID"], y=df[col].astype(int), name=col), row=1, col=1
-#        )
-#    fig.update_layout(title="Exploration of DPNI", barmode="stack")
-#    df["VAF_miss"] = round(df["intend"].astype(int) / df["Total_Depth"].astype(int), 2)
-#    fig.add_trace(
-#        go.Scatter(
-#            x=(df["varReadPercent"] / 100).round(2),
-#            y=df["VAF_miss"],
-#            mode="markers",
-#            marker_color="blue",
-#            name="VAF foetus / maternal blood",
-#            text=df["variantID"],
-#            customdata=np.dstack((df["varReadPercent"]))
-#                [, "varReadPercent", "varReadPercent", "varankVarScore", "alleleFrequency"]
-#            hovertemplate="<b>%{text}</b><br><br>" +
-#            "GDP per Capita: %{x:$,.0f}<br>" +
-#        ),
-#        row=2,
-#        col=1,
-#    )
-#    # fig.update_xaxes(categoryorder="array", categoryarray=df["variantID"])
-#    # fig.update_yaxes(categoryorder="array", categoryarray=df["variantID"])
-#    fig.write_html(output)
-
-
 def viz_go(input, output):
     df = input.loc[input["varType"] == "substitution"]
     print(*df.columns)
@@ -1300,14 +1272,15 @@ def viz_go(input, output):
             row=1,
             col=1,
         )
-
+    # discard_base_interne = df.loc[df["alleleFrequency"] < 0.02]
     custom = df[
         ["varReadPercent", "varReadDepth", "varankVarScore", "alleleFrequency"]
     ].copy()
     custom["varReadPercent"] = custom["varReadPercent"] / 100
-
+    print("#[INFO] HOVER scatter plot ", len(custom.index))
     # print(df[["varReadPercent", "varReadDepth", "varankVarScore", "alleleFrequency"]].head())
     # customdata=np.dstack((df["varReadPercent"] / 100, df["varReadDepth"], df["varankVarScore"], df["alleleFrequency"]))
+
     fig.add_trace(
         go.Scatter(
             x=(df["varReadPercent"] / 100).round(2),
@@ -1325,7 +1298,6 @@ def viz_go(input, output):
         row=2,
         col=1,
     )
-    df = identify_miss(df)
     fig.add_trace(
         go.Histogram(
             histfunc="count", x=df["Explanations"], name="count", legendgroup="3"
@@ -1359,11 +1331,11 @@ def identify_miss(df):
         for j in range(1, 3, 1):
             range_var.append(variants["start"] - j)
         # case of variants nearby
-        if df["start"].isin(range_var).any():
-            test = ",".join(df[df["start"].isin(range_var)]["variantID"].to_list())
-            dico["Explanations"].append("Annotations issues " + str(test) + " nearby")
+        # if df["start"].isin(range_var).any():
+        #    test = ",".join(df[df["start"].isin(range_var)]["variantID"].to_list())
+        #    dico["Explanations"].append("Annotations issues " + str(test) + " nearby")
         # GC-rich or repeat zone arbitrary set at VAF allele muté 5%
-        elif variants["VAF_miss"] > 0.05:
+        if variants["VAF_miss"] > 0.05:
             dico["Explanations"].append("GC-rich or repeat zone")
         # no explanation
         else:
