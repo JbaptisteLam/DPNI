@@ -626,20 +626,22 @@ def dataframeMetrics(
         f.write(tail_html)
 
 
-# 09/05/2022   remove variant s which are not in this filter and
+# 09/05/2022   remove variant s which are not in this filter and 14 JUIN VAR READ DEPTH to TOTAL DEPTH TO SEE TODO
 def filter_fp(df, name, output):
     df["alleleFrequency"] = df["alleleFrequency"].apply(lambda x: x.replace(",", "."))
     df["alleleFrequency"] = df["alleleFrequency"].astype(float)
     df_filter = df.loc[
-        (df["varReadPercent"] > 20)
-        & (df["varReadDepth"] > 20)
-        & (df["alleleFrequency"] < 2)
+        (
+            (df["varReadPercent"] > 20)
+            & (df["totalReadDepth"] > 20)
+            & (df["alleleFrequency"] < 0.02)
+        )
     ]
     df_opposite = df.loc[
         ~(
             (df["varReadPercent"] > 20)
-            & (df["varReadDepth"] > 20)
-            & (df["alleleFrequency"] < 2)
+            & (df["totalReadDepth"] > 20)
+            & (df["alleleFrequency"] < 0.02)
         )
     ]
     print("#[INFO] variants total ", len(df.index))
@@ -776,9 +778,9 @@ def add_cov(tsv, df):
         else:
             lookto.append(0)
 
-    final["intend"] = lookto
+    final["expected"] = lookto
     final["VAF_miss"] = round(
-        final["intend"].astype(int) / final["Total_Depth"].astype(int), 2
+        final["expected"].astype(int) / final["Total_Depth"].astype(int), 2
     )
     return final
 
@@ -1166,12 +1168,15 @@ def main_stats():
         filter_indels = "cNomen"
 
     # keep opposite df
+    writeTsv(ci_fp, "cas_index_propre", args.output)
     writeTsv(ci_fp_opposite, "cas_index_opposite", args.output)
 
     # remove variants in pool which are opposite of variant with filter in fasle_fp func 23/05, VAF < 20 AD < 20 AFbaseinterne > 2
     # cas index 100 opposite
     opposite = ci_fp_opposite
+
     dfpool = merge_df(pool, opposite, "variantID", "cNomen", "outer", "left_only")
+    writeTsv(dfpool, "pool_propre", args.output)
 
     final_snv_tmp, final_indels_tmp = splitVariants(list_df)
 
