@@ -86,7 +86,7 @@ def scatter_vaf(tsv, output, name, dico):
                 color=df["varReadPercent"],
                 colorbar=dict(title="VAF colorscale"),
                 colorscale="Turbo",
-                size=8,
+                size=6,
                 symbol="square",
             ),
             hovertemplate="<br>".join(
@@ -479,15 +479,24 @@ class Paternalidentification(Process):
         # In maternal blood keep only rare variant(probably patho) popfreq < 0.02 #TODO
         # paternal_var_rare = paternal_var.loc[paternal_var["alleleFrequency"] < 0.02]
         paternal_var_rare = paternal_var
-        paternal_var_rare.to_csv(
-            osj(self.output, "paternal.tsv"), sep="\t", header=True, index=False
-        )
+        # paternal_var_rare.to_csv(
+        #    osj(self.output, "paternal.tsv"), sep="\t", header=True, index=False
+        # )
         ff = self.getFF(paternal_var_rare, sub)
+        # paternal_var_rare["varReadPercent"] = paternal_var_rare["varReadPercent"].apply(
+        #    lambda x: round(x / 100, 2)
+        # )
+        print(paternal_var_rare["varReadPercent"].head())
         plotvaf(paternal_var_rare, self.output)
         # Generate dico for annotation in plot
 
         dico = series_to_stats(paternal_var_rare["varReadPercent"])
+        print(paternal_var_rare["varReadPercent"].head())
         scatter_vaf(paternal_var_rare, self.output, "vafFFestim", dico)
+        print(paternal_var_rare["varReadPercent"].head())
+        paternal_var_rare.to_csv(
+            osj(self.output, "paternalcheck.tsv"), header=True, index=False, sep="\t"
+        )
 
 
 class Homozygotebased(Process):
@@ -684,7 +693,7 @@ class Homozygotebased(Process):
 
 
 class Seqff:
-    def __init__(self, bamfoetus):  # mount, image, k_fold, container_name
+    def __init__(self, bamfoetus, output):  # mount, image, k_fold, container_name
         self.bamfoetus = bamfoetus
         # self.client = docker.APIClient(base_url='unix://var/run/docker.sock', timeout=10000)
         # self.config = self.client.create_host_config(binds=mount)
@@ -699,7 +708,8 @@ class Seqff:
         if not os.path.exists(stats):
             print("#[INFO] Generate Reads profile " + stats)
             systemcall(samtools + " stats " + bam + " > " + stats)
-
+        else:
+            print("Warning " + stats + " already exists !")
         # col stats file | insert size, pairs total, inward oriented pairs, outward oriented pairs, other pairs
         dico = {}
         if os.path.exists(stats):
@@ -913,7 +923,7 @@ def parseargs():  # TODO continue subparser and add ML docker in script
         "-i",
         "--image",
         type=str,
-        default="continuumio/miniconda3:latest",
+        default="r-base:4.0.2",
         help="Image of seqFF container",
     )
     parser_c.add_argument(
