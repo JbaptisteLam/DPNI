@@ -36,10 +36,11 @@ import time
 import subprocess
 import statistics as sts
 import sys
+import json
 
 # git combo FF, dossier TEST TODO
 def fancystdout(style, text):
-    subprocess.call("pyfiglet -f " + style + " '" + text + "' | lolcat ", shell=True)
+    subprocess.call("pyfiglet -f " + style + " '" + text + "'", shell=True)
 
 
 def scatter_vaf(tsv, output, name, dico):
@@ -123,8 +124,9 @@ def scatter_vaf(tsv, output, name, dico):
 
 
 def series_to_stats(series):
-    values = series.apply(lambda x: x * 2).to_list()
-
+    # Remove multiplication by 2
+    # values = series.apply(lambda x: x * 2).to_list()
+    values = series.to_list()
     dico = {
         "Mean": sts.mean(values),
         "Median": sts.median(values),
@@ -303,9 +305,9 @@ class Process:
         # FOR TSV only #TODO
         columns_list = ["alleleFrequency"]
         if filterqual:
-            print(
-                "#[INFO] Filterquality remove varReadPercent < 30 varReadDepth < 30 and qualphred < 300"
-            )
+            # print(
+            #    "#[INFO] Filterquality remove varReadPercent < 30 varReadDepth < 30 and qualphred < 300"
+            # )
             mother = self.filterquality(
                 self.col_type(pd.read_pickle(mother + ".pickle"), columns_list)
             )
@@ -319,9 +321,9 @@ class Process:
         foetus = self.col_type(pd.read_pickle(foetus + ".pickle"), columns_list)
 
         # filter_foetus, filter_foetus_homo = self.processtsv(self.filterquality(mother), self.filterquality(father), foetus)
-        father.to_csv(
-            osj(output, "paternal_test.tsv"), sep="\t", header=True, index=False
-        )
+        # father.to_csv(
+        #    osj(output, "paternal_test.tsv"), sep="\t", header=True, index=False
+        # )
         print(foetus[["alleleFrequency"]].head())
         return mother, father, foetus
 
@@ -344,16 +346,25 @@ class Process:
         #    & (df["QUALphred"] > 300)
         #    & (df["alleleFrequency"] < 0.02)
         # ]
-        print("INFO")
-        print(df.dtypes["alleleFrequency"])
-        print(df.dtypes["totalReadDepth"])
+        # print(df.dtypes["alleleFrequency"])
+        # print(df.dtypes["totalReadDepth"])
         filter = df.loc[
             (df["varReadPercent"] > 20)
             & (df["totalReadDepth"] > 20)
             & (df["QUALphred"] > 300)
-            # & (df["alleleFrequency"] < 0.02)
+            & (df["alleleFrequency"] < 0.02)
         ]
-        print(df["alleleFrequency"])
+        # print(df["alleleFrequency"])
+        config_filter = {}
+        cols = ["varReadPercent", "totalReadDepth", "QUALphred", "alleleFrequency"]
+        for col in cols:
+            if col in filter.columns and filter[col].dtypes in ["int64", "float"]:
+                config_filter[col] = [
+                    str(min(filter[col].to_list())),
+                    str(max(filter[col].to_list())),
+                ]
+        with open(osj(self.output, "filter.json"), "w+") as j:
+            json.dump(config_filter, j)
         return filter
 
 
@@ -693,21 +704,26 @@ class Homozygotebased(Process):
 
 
 class Seqff:
-    def __init__(self, bamfoetus, output):  # mount, image, k_fold, container_name
+    def __init__(
+        self, bamfoetus, output, samtools, seqff
+    ):  # mount, image, k_fold, container_name
         self.bamfoetus = bamfoetus
+        self.output = output
+        self.samtools = samtools
+        self.seqff = seqff
         # self.client = docker.APIClient(base_url='unix://var/run/docker.sock', timeout=10000)
         # self.config = self.client.create_host_config(binds=mount)
         # self.image = image
         # self.k_fold = k_fold
         # self.container_name = container_name
 
-    def readprofile(self, samtools, output):
+    def readprofile(self):
         bam = self.bamfoetus
         bamname = os.path.basename(bam).split(".")[0]
-        stats = osj(output, "stats_samtools_" + bamname)
+        stats = osj(self.output, "stats_samtools_" + bamname)
         if not os.path.exists(stats):
             print("#[INFO] Generate Reads profile " + stats)
-            systemcall(samtools + " stats " + bam + " > " + stats)
+            systemcall(self.samtools + " stats " + bam + " > " + stats)
         else:
             print("Warning " + stats + " already exists !")
         # col stats file | insert size, pairs total, inward oriented pairs, outward oriented pairs, other pairs
@@ -727,7 +743,37 @@ class Seqff:
         # df_stats.loc[0, '220'] = 0.0910165153462862
         bamname = os.path.basename(bam).split(".")[0]
         df_stats.to_csv(
-            osj(output, bamname + ".tsv"), sep="\t", header=False, index=False
+            osj(self.output, bamname + ".tsv"), sep="\t", header=False, index=False
+        )
+        return osj(self.output, bamname + ".tsv")
+
+    def analysis(self):
+        if self.bamfoetus.endswith(".sam"):
+            self.launch_seqff(self.bamfoetus, self.output, "sam")
+        elif self.bamfoetus.endswith(".tsv"):
+            self.launch_seqff(self.bamfoetus, self.output, "counts")
+        else:
+            bf = self.readprofile()
+            self.launch_seqff(bf, self.output, "counts")
+
+    def launch_seqff(self, foetus, output, format):
+        name = foetus.split(".", 1)[0]
+        systemcall(
+            "Rscript "
+            + self.seqff
+            + " --i="
+            + os.path.dirname(foetus)
+            + " --j="
+            + os.path.basename(foetus)
+            + " --o="
+            + name
+            + " --d="
+            + output
+            + " --t="
+            + format
+            + " --s="
+            + os.path.dirname(self.seqff)
+            + " &"
         )
 
         # SEQFF analysis
@@ -753,7 +799,7 @@ class Seqff:
         # 	predict = self.generatepredict(self, output, sample)
         # 	self.runcontainer(predict)
         #
-        return df_stats
+        # return df_stats
 
     def runcontainer(self, cmd):
         self.container = self.client.create_container(
@@ -910,6 +956,13 @@ def parseargs():  # TODO continue subparser and add ML docker in script
         required=True,
     )
     parser_c.add_argument(
+        "-s",
+        "--seqff",
+        type=str,
+        help="Absolute path of seqFF executable, default /app/seqff",
+        default="/app/seqff/pd4615-sup-0002-seqff.r",
+    )
+    parser_c.add_argument(
         "-m",
         "--mount",
         type=dict,
@@ -1003,16 +1056,10 @@ def main():
 
     # 2) From combo_FF seqFF modele
     elif args.func == "seqff":
-        print("#[INFO] In developpement exit !")
-        # bams = systemcall('find '+args.bfoetus+' -name "*.bwamem.bam" ! -name "*.validation.*"' )
-        # for bamfile in bams:
-        #
-        # 	#for files in os.listdir()
-        # 	print("#[INFO] Bam "+bamfile)
-        # 	pseq = Seqff(bamfile)
-        # 	print(pseq.readprofile(args.samtools, args.output)) #, args.mount, args.image, args.kfold, args.container)
-        pseq = Seqff(args.bfoetus)
-        print(pseq.readprofile(args.samtools, args.output))
+        print("#[INFO] FF estimation by seqff !")
+        pseq = Seqff(args.bfoetus, args.output, args.samtools, args.seqff)
+        pseq.analysis()
+
     # 3) From publication with UMI standard deviation
     elif args.func == "paternal":
         p = Homozygotebased(
