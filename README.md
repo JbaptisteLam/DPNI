@@ -1,3 +1,4 @@
+
 # Non-Invasive Prenatal Diagnostic
 Tools to estimate foetal fraction and performed non-invasive pre-natal diagnostic
 # Seqff 
@@ -11,4 +12,5 @@ Kim SK, Hannum G, Geis J, Tynan J, Hogg G, Zhao C, Jensen TJ, Mazloom AR, Oeth P
 | --j           modified |Name of input file (samfile without header or tabulated read                counts ordered by genomic coordinates, could be found in SupplentalTable1.csv in seqff folder)     |   
 | --o             | Name of output file (it will be a csv file)
 | --d             | Aboslute path of folder which will contain output
+| --s             | Absolute path of folder containing SEQff binaries
 | --t             | Datatype ('sam' or 'counts' conf j arg)
