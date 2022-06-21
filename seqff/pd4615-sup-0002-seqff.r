@@ -31,25 +31,28 @@ ff.pred <- function(gc.norm.bc.61927, B, mu, parameter.1, parameter.2){
 ##################################################################################################################################################
 ##################################################################################################################################################
 ##### COMMAND LINE ARGUMENTS
+
 arg=commandArgs()
 input.dir = unlist(strsplit(arg[ pmatch("--i",arg)], "="))[2]
 file.name = unlist(strsplit(arg[ pmatch("--j",arg)], "="))[2]
 output.dir = unlist(strsplit(arg[ pmatch("--d",arg)], "="))[2]
 output.filename = unlist(strsplit(arg[ pmatch("--o",arg)], "="))[2]
 datatype = unlist(strsplit(arg[ pmatch("--t",arg)], "="))[2]
+seqff = unlist(strsplit(arg[ pmatch("--s",arg)], "="))[2]
 
-
+setwd(seqff)
+print("Seqff args")
+print(input.dir)
+print(file.name)
+print(output.dir)
+print(output.filename)
+print(datatype)
 load("SupplementalFile1.RData")
 bininfo = read.csv("SupplementalTable2.csv")
 colnames(bininfo)[1]="binName"
 bininfo$binorder=c(1:61927)
 
 setwd(input.dir)
-print(input.dir)
-print(file.name)
-print(output.dir)
-print(output.filename)
-print(datatype)
 ##################################################################################################################################################
 ##### READ IN DATA
 if( datatype =="sam" )
