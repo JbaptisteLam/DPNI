@@ -276,13 +276,14 @@ class Process:
         print("#[INFO] Length mother variants ", len(self.mother.index))
         print("#[INFO] Length father variants ", len(self.father.index))
         print("#[INFO] Length foetus variants ", len(self.foetus.index))
-        self.header = {}
-        fam = ["mother", "father", "foetus"]
-        for i, path in locals().items():
-            if i in fam:
-                name = os.path.basename(path).split(".")[0]
-                self.header[name] = getheader(path)
+        # self.header = {}
+        # fam = ["mother", "father", "foetus"]
+        # for i, path in locals().items():
+        #    if i in fam:
+        #        name = os.path.basename(path).split(".")[0]
+        #        self.header[name] = getheader(path)
         self.output = output
+        self.filterqual = filterqual
 
     def preprocess(self, mother, father, foetus, filetype, output, filterqual):
         """
@@ -309,10 +310,10 @@ class Process:
             #    "#[INFO] Filterquality remove varReadPercent < 30 varReadDepth < 30 and qualphred < 300"
             # )
             mother = self.filterquality(
-                self.col_type(pd.read_pickle(mother + ".pickle"), columns_list)
+                self.col_type(pd.read_pickle(mother + ".pickle"), columns_list), output
             )
             father = self.filterquality(
-                self.col_type(pd.read_pickle(father + ".pickle"), columns_list)
+                self.col_type(pd.read_pickle(father + ".pickle"), columns_list), output
             )
         else:
             mother = self.col_type(pd.read_pickle(mother + ".pickle"), columns_list)
@@ -324,21 +325,21 @@ class Process:
         # father.to_csv(
         #    osj(output, "paternal_test.tsv"), sep="\t", header=True, index=False
         # )
-        print(foetus[["alleleFrequency"]].head())
+        # print(foetus[["alleleFrequency"]].head())
         return mother, father, foetus
 
     def col_type(self, df, columns_list):
-        print(columns_list)
+        # print(columns_list)
         for col in columns_list:
-            print(col)
-            print(df.dtypes[col])
+            # print(col)
+            # print(df.dtypes[col])
             if df.dtypes[col] != "float64":
                 df.loc[:, col] = (
                     df[col].astype(str).str.replace(",", ".").astype("float")
                 )
         return df
 
-    def filterquality(self, df):
+    def filterquality(self, df, output):
         # old
         # filter = df.loc[
         #    (df["varReadPercent"] > 30)
@@ -352,7 +353,7 @@ class Process:
             (df["varReadPercent"] > 20)
             & (df["totalReadDepth"] > 20)
             & (df["QUALphred"] > 300)
-            & (df["alleleFrequency"] < 0.02)
+            # & (df["alleleFrequency"] < 0.02)
         ]
         # print(df["alleleFrequency"])
         config_filter = {}
@@ -363,7 +364,7 @@ class Process:
                     str(min(filter[col].to_list())),
                     str(max(filter[col].to_list())),
                 ]
-        with open(osj(self.output, "filter.json"), "w+") as j:
+        with open(osj(output, "filter.json"), "w+") as j:
             json.dump(config_filter, j)
         return filter
 
@@ -450,17 +451,14 @@ class Paternalidentification(Process):
             + str(len(paternal.index))
         )
         # Probably denovo
-        denovo = foetus_filter.loc[(foetus_filter["varReadPercent"] > 0.075)]
+        # denovo = foetus_filter.loc[(foetus_filter["varReadPercent"] > 0.075)]
 
         # print("#[INFO] Variants comming from father between 4 and 15percent of FF ", len(paternal.index))
-        print(
-            "#[INFO] After all filter, probably denovo variants (normally high for now cuz using 100percent ES foetus ",
-            len(denovo.index),
-        )
+        # print("#[INFO] After all filter, probably denovo variants (normally high for now cuz using 100percent ES foetus ", len(denovo.index),)
         print(paternal.head())
         print(paternal["varReadPercent"].max())
         print(paternal["varReadPercent"])
-        return paternal, denovo
+        return paternal
 
     def getFF(self, paternal, foetus_filter):
         # equal to paternal if above func TODO
@@ -484,7 +482,7 @@ class Paternalidentification(Process):
 
     def main_paternal(self):
         sub = self.subtract_maternal()
-        paternal_var, denovo = self.identify_paternal(sub)
+        paternal_var = self.identify_paternal(sub)
         paternal_var.sort_values("varReadPercent", ascending=True, inplace=True)
 
         # In maternal blood keep only rare variant(probably patho) popfreq < 0.02 #TODO
@@ -511,17 +509,22 @@ class Paternalidentification(Process):
 
 
 class Homozygotebased(Process):
-    def __init__(self, mother, father, foetus, filetype, output, filterqual):
+    def __init__(
+        self, mother, father, foetus, filetype, output, filterqual, bedtools, rmasker
+    ):
         super().__init__(mother, father, foetus, filetype, output, filterqual)
 
-        self.mother = self.mother.loc[self.mother["varType"] == "substitution"]
-        self.father = self.father.loc[self.father["varType"] == "substitution"]
-        self.foetus = self.foetus.loc[self.foetus["varType"] == "substitution"]
-        self.dataframe_list = [mother, father, foetus]
+        # self.mother = self.mother.loc[self.mother["varType"] == "substitution"]
+        # self.father = self.father.loc[self.father["varType"] == "substitution"]
+        # self.foetus = self.foetus.loc[self.foetus["varType"] == "substitution"]
+        # self.dataframe_list = [mother, father, foetus]
+        self.output = output
+        self.bedtools = bedtools
+        self.rmasker = rmasker
         print(self.mother.varType.unique())
 
     # PURE FETAL FRACTION ESTIMATION based on publciation below
-    def globalfilter(self, df, rmasker, output, pattern, bedtools):
+    def globalfilter(self, df, rmasker, pattern):
         """
                 Prenatal Testing. BioTech 2021, 10, 17.https://doi.org/10.3390/biotech10030017, parameters read depth and MAF SNP should be common enough to be detected
                 Sims, D.; Sudbery, I.; Ilot, N.E.; Heger, A.; Ponting, C.P. Sequencing depth and coverage: Key considerations in genomic analyses.
@@ -538,14 +541,15 @@ class Homozygotebased(Process):
         df.loc[:, "chr"] = "chr" + df.chr
 
         # name of dataframe of variants to bed
-        bedname = osj(output, pattern)
-        foetusfilter = osj(output, pattern + ".out")
+        bedname = osj(self.output, pattern)
+        foetusfilter = osj(self.output, pattern + ".out")
         # repeatmasker
         bed = self.dataframetoregions(df, bedname, True)
         if not os.path.exists(foetusfilter):
             print("#[INFO] BEDTOOLS Processing ... ")
             systemcall(
-                "/home1/TOOLS/tools/bedtools/current/bin/bedtools intersect -v -a "
+                self.bedtools
+                + " intersect -v -a "
                 + bed
                 + " -b "
                 + rmasker
@@ -658,6 +662,39 @@ class Homozygotebased(Process):
 
         # print("MOTHER ", vafp.loc[(mother['start'] == 9783147)])
         return vafp, vafm
+
+    def get_ff(self):
+        VAFp_tmp = self.globalfilter(self.father, self.rmasker, "filter_father")
+        VAFm_tmp = self.globalfilter(self.mother, self.rmasker, "filter_mother")
+
+        VAFp, VAFm = self.processtsv(VAFm_tmp, VAFp_tmp)
+        VAFp.to_csv(osj(self.output, "VAFp.tsv"), sep="\t", header=True, index=False)
+        # print("MOTHER ", VAFp.loc[(VAFp['start'] == 9783147)])
+        VAFm.to_csv(osj(self.output, "VAFm.tsv"), sep="\t", header=True, index=False)
+        print("#[INFO] VAFp df " + str(len(VAFp.index)))
+        print("#[INFO] VAFm df " + str(len(VAFm.index)))
+
+        print("#[INFO] VAFp estimate " + str(self.estimateFF(VAFp) / 100))
+        print("#[INFO] VAFm estimate " + str(self.estimateFF(VAFm) / 100))
+
+        FF = self.estimateFF(VAFp) / 100 + (1 - self.estimateFF(VAFm) / 100)
+        print("#[INFO] Estimation of Foetal fraction : ", FF)
+
+    def get_ff_jiang(self):
+        VAFp_tmp = self.globalfilter(self.father, self.rmasker, "filter_father")
+        VAFm_tmp = self.globalfilter(self.mother, self.rmasker, "filter_mother")
+        VAFp, VAFm = self.processtsv(VAFm_tmp, VAFp_tmp)
+        res = {}
+        for i, var in VAFp.iterrows():
+            # print(var)
+            res[var["variantID"]] = float(
+                2
+                * var["varReadDepth"]
+                / (var["varReadDepth"] + (var["totalReadDepth"] - var["varReadDepth"]))
+            )
+        print(json.dumps(res, indent=4))
+        print("FFestimation: ", average(res.values()))
+        return average(res.values())
 
     def dataframetoregions(self, dataframe, bedname, save):
         bed = dataframe.loc[:, ["chr", "start", "end"]]
@@ -1063,27 +1100,18 @@ def main():
     # 3) From publication with UMI standard deviation
     elif args.func == "paternal":
         p = Homozygotebased(
-            args.mum, args.dad, args.foetus, args.type, args.output, args.quality
+            args.mum,
+            args.dad,
+            args.foetus,
+            args.type,
+            args.output,
+            args.quality,
+            args.bedtools,
+            args.rmasker,
         )
-        VAFp_tmp = p.globalfilter(
-            p.father, args.rmasker, args.output, "filter_father", args.bedtools
-        )
-        VAFm_tmp = p.globalfilter(
-            p.mother, args.rmasker, args.output, "filter_mother", args.bedtools
-        )
-
-        VAFp, VAFm = p.processtsv(VAFm_tmp, VAFp_tmp)
-        VAFp.to_csv(osj(args.output, "VAFp.tsv"), sep="\t", header=True, index=False)
-        # print("MOTHER ", VAFp.loc[(VAFp['start'] == 9783147)])
-        VAFm.to_csv(osj(args.output, "VAFm.tsv"), sep="\t", header=True, index=False)
-        print("#[INFO] VAFp df " + str(len(VAFp.index)))
-        print("#[INFO] VAFm df " + str(len(VAFm.index)))
-
-        print("#[INFO] VAFp estimate " + str(p.estimateFF(VAFp) / 100))
-        print("#[INFO] VAFm estimate " + str(p.estimateFF(VAFm) / 100))
-
-        FF = p.estimateFF(VAFp) / 100 + (1 - p.estimateFF(VAFm) / 100)
-        print("#[INFO] Estimation of Foetal fraction : ", FF)
+        print(p)
+        p.get_ff()
+        p.get_ff_jiang()
 
     elif args.func == "plotvaf":
         scatter_vaf(args.dataframe, args.output, args.name)
