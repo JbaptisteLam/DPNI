@@ -5,7 +5,7 @@ import os
 import sys
 
 sys.path.append("..")
-from utils.utils import average
+from utils.utils import average, plotvaf, series_to_stats, scatter_vaf
 
 
 class Paternalidentification(Process):
