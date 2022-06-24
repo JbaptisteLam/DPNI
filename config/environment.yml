@@ -1,0 +1,12 @@
+name: dpni
+channels:
+  - conda-forge
+  - defaults
+  - bioconda
+dependencies:
+  - python=3.9
+  - plotly
+  - pyfiglet
+  - pandas
+  - pysam
+  - matplotlib
