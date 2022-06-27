@@ -72,7 +72,7 @@ def parseargs():  # TODO continue subparser and add ML docker in script
     parser_b.add_argument(
         "-b",
         "--bedtools",
-        default="/home1/TOOLS/tools/bedtools/current/bin/bedtools",
+        default="bedtools",
         type=str,
         help="Abs path of bedtools executable",
     )

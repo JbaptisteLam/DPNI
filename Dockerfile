@@ -13,7 +13,7 @@ RUN apt-get update -y
 RUN cd /tmp
 RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh && sh Miniconda3-py39_4.12.0-Linux-x86_64.sh -b -p /usr/local/lib/miniconda3
 ENV PATH="/usr/local/lib/miniconda3/bin:$PATH"
-RUN conda install -y -c bioconda -c conda-forge snakemake samtools
+RUN conda install -y -c bioconda -c conda-forge snakemake samtools bedtools
 COPY . /app
 RUN conda env create -f /app/config/environment.yml
 RUN echo "source activate dpni" >> ~/.bashrc
