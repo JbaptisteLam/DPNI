@@ -10,3 +10,4 @@ dependencies:
   - pandas
   - pysam
   - matplotlib
+  - statsmodels
