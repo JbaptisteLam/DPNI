@@ -4,6 +4,7 @@ from os.path import join as osj
 import os
 import sys
 
+
 sys.path.append("..")
 from utils.utils import average, plotvaf, series_to_stats, scatter_vaf
 
@@ -140,8 +141,11 @@ class Paternalidentification(Process):
 
         dico = series_to_stats(paternal_var_rare["varReadPercent"])
         print(paternal_var_rare["varReadPercent"].head())
-        scatter_vaf(paternal_var_rare, self.output, "vafFFestim", dico)
+        # try jinja template test
+        fig, js = scatter_vaf(paternal_var_rare, self.output, "vafFFestim", dico)
+
         print(paternal_var_rare["varReadPercent"].head())
         paternal_var_rare.to_csv(
             osj(self.output, "paternalcheck.tsv"), header=True, index=False, sep="\t"
         )
+        return paternal_var_rare, dico, ff, js
