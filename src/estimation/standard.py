@@ -115,7 +115,7 @@ class Paternalidentification(Process):
         # df = pd.DataFrame(var)
         # remove double line for homozygote variant
         # df_filter = df.drop_duplicates(subset=['variantID', 'cNomen'], keep='Last')
-        ff = round(average(paternal["varReadPercent"]), 2) * 2
+        ff = round(average(paternal["varReadPercent"] / 100), 2) * 2
         print("#[INFO] FF estimation: " + str(ff))
         # paternal.to_csv('test_ff.tsv', sep='\t', columns=paternal.columns, index=False)
         return ff
