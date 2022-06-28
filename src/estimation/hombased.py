@@ -181,7 +181,7 @@ class Homozygotebased(Process):
 
         FF = self.estimateFF(VAFp) / 100 + (1 - self.estimateFF(VAFm) / 100)
         print("#[INFO] Estimation of Foetal fraction : ", FF)
-        return FF
+        return FF, VAFp, VAFm
 
     def get_ff_jiang(self):
         VAFp_tmp = self.globalfilter(self.father, self.rmasker, "filter_father")
@@ -195,10 +195,10 @@ class Homozygotebased(Process):
                 * var["varReadDepth"]
                 / (var["varReadDepth"] + (var["totalReadDepth"] - var["varReadDepth"]))
             )
-        with open("variants_jiang_estimation.tsv", "w+") as v:
+        with open(osj(self.output, "variants_jiang_estimation.tsv"), "w+") as v:
             json.dump(res, v)
         print("FFestimation Jiang: ", average(res.values()))
-        return average(res.values())
+        return average(res.values()), VAFp
 
     def dataframetoregions(self, dataframe, bedname, save):
         bed = dataframe.loc[:, ["chr", "start", "end"]]
