@@ -143,6 +143,23 @@ def parseargs():  # TODO continue subparser and add ML docker in script
     )
     parser_d.add_argument("-n", "--name", type=str, help="Name of output plot")
     parser_d.set_defaults(func="plotvaf")
+
+    parser_e = subparsers.add_parser(
+        "metrics",
+        help="Generate global metrics in html format",
+    )
+    parser_e.add_argument(
+        "-df",
+        help="Absolute path of pickle dataframe containing metrics from other analysis",
+        type=str,
+    )
+    parser_e.add_argument(
+        "-js",
+        help="Absolute path of json containing scatterplot generated in standard analysis",
+        type=str,
+    )
+    parser_e.set_defaults(func="metrics")
+
     parser.add_argument(
         "-q",
         "--quality",
