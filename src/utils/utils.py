@@ -6,6 +6,7 @@ from pyfiglet import Figlet
 from io import StringIO
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.utils as pu
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -13,6 +14,8 @@ import pandas as pd
 import subprocess
 import statistics as sts
 import sys
+import json
+import jinja2
 
 
 # git combo FF, dossier TEST TODO
@@ -97,7 +100,9 @@ def scatter_vaf(tsv, output, name, dico):
     fig.update_xaxes(title_text="index")
     fig.update_yaxes(title_text="VAF")
     fig.write_html(osj(output, name + ".html"))
-    return fig
+    with open(osj(output, "plot.json"), "w+") as j:
+        json.dump(fig, j, cls=pu.PlotlyJSONEncoder)
+    return fig, osj(output, "plot.json")
 
 
 def series_to_stats(series):
@@ -181,6 +186,7 @@ def systemcall(command):
     """
     print("#[INFO] " + command)
     p = subprocess.Popen([command], stdout=subprocess.PIPE, shell=True)
+    p.wait()
     return p.stdout.read().decode("utf8").strip().split("\n")
 
 
@@ -241,3 +247,42 @@ def col_type_float(df, col):
     else:
         df[col].str.replace(",", ".").astype("float")
         return df
+
+
+def color_negative_red(val):
+    """
+    Takes a scalar and returns a string with
+    the css property `'color: red'` for negative
+    strings, black otherwise.
+    """
+    color = "red" if int(val) < 0 else "black"
+    return "color: %s" % color
+
+
+def generate_report(output, df, js):
+    styler = df.style.applymap(
+        color_negative_red, subset=["Variants count", "Foetal fraction"]
+    ).highlight_null("yellow")
+
+    template = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(searchpath="../config")
+    ).get_template("template.html")
+    with open(osj(output, "metrics.html"), "w+") as f:
+        f.write(template.render(fig=js, metrics=styler.render()))
+    return output
+
+
+def fill_metrics(metrics, dico_val):
+    print("#[INFO] Create metrics")
+    if not os.path.exists(metrics):
+        pd.DataFrame(columns=["Method", "Variants count", "Foetal fraction"]).to_csv(
+            metrics, sep="\t", header=True, index=False
+        )
+    df = pd.read_csv(metrics, header=0, sep="\t")
+    df_dict = pd.DataFrame.from_dict(dico_val)
+    print(df_dict)
+    df = df.append(df_dict, ignore_index=True)
+    df.to_csv(metrics, sep="\t", header=True, index=False)
+    print("after appending")
+    print(df)
+    return df
