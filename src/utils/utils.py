@@ -255,13 +255,14 @@ def color_negative_red(val):
     the css property `'color: red'` for negative
     strings, black otherwise.
     """
-    color = "red" if int(val) < 0 else "black"
+    color = "red" if float(val) < 0 or float(val) > 1 else "black"
     return "color: %s" % color
 
 
 def generate_report(output, df, js):
+    df["Variants count"] = df["Variants count"].astype("Int64")
     styler = df.style.applymap(
-        color_negative_red, subset=["Variants count", "Foetal fraction"]
+        color_negative_red, subset=["Foetal fraction"]
     ).highlight_null("yellow")
 
     template = jinja2.Environment(
@@ -279,7 +280,10 @@ def fill_metrics(metrics, dico_val):
             metrics, sep="\t", header=True, index=False
         )
     df = pd.read_csv(metrics, header=0, sep="\t")
-    df_dict = pd.DataFrame.from_dict(dico_val)
+    if isinstance(dico_val, dict):
+        df_dict = pd.DataFrame.from_dict(dico_val)
+    else:
+        df_dict = dico_val
     print(df_dict)
     df = df.append(df_dict, ignore_index=True)
     df.to_csv(metrics, sep="\t", header=True, index=False)
