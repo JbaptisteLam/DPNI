@@ -5,6 +5,7 @@ import sys
 
 sys.path.append("..")
 from utils.utils import systemcall
+import numpy as np
 
 
 class Seqff:
@@ -53,15 +54,15 @@ class Seqff:
 
     def analysis(self):
         if self.bamfoetus.endswith(".sam"):
-            self.launch_seqff(self.bamfoetus, self.output, "sam")
+            return self.launch_seqff(self.bamfoetus, self.output, "sam")
         elif self.bamfoetus.endswith(".tsv"):
-            self.launch_seqff(self.bamfoetus, self.output, "counts")
+            return self.launch_seqff(self.bamfoetus, self.output, "counts")
         else:
             bf = self.readprofile()
-            self.launch_seqff(bf, self.output, "counts")
+            return self.launch_seqff(bf, self.output, "counts")
 
     def launch_seqff(self, foetus, output, format):
-        name = foetus.split(".", 1)[0]
+        name = os.path.basename(foetus).split(".", 1)[0] + ".tsv"
         systemcall(
             "Rscript "
             + self.seqff
@@ -79,6 +80,10 @@ class Seqff:
             + os.path.dirname(self.seqff)
             + " &"
         )
+        df = pd.read_csv(osj(output, name), sep=",", header=0)
+        df.columns = ["Method", "Foetal fraction"]
+        df["Variants count"] = np.nan
+        return df[["Method", "Variants count", "Foetal fraction"]]
 
         # SEQFF analysis
         # ml_folder = osj(output, 'data')
