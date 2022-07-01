@@ -1,6 +1,16 @@
 <html>
 <head>
     <style>
+        .gradient_bg {
+    background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+    background-size: 400% 400%;
+    -webkit-animation: gradient 15s ease infinite;
+            animation: gradient 15s ease infinite;
+    height: 100vh;
+        }
+        .scatterplot {
+            margin-top: 10px;
+        }
         * {
             font-family: sans-serif;
         }
@@ -20,12 +30,11 @@
     </style>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 </head>
-<body>
-
+<body class="gradient_bg">
 <h1>Estimation of foetal fraction</h1>
 
 {{ metrics | safe }}
-<div id="myPlot"></div>
+<div id="myPlot", class="scatterplot"></div>
 </body>
 <script>
        Plotly.newPlot("myPlot", {{ fig | safe }})
